@@ -37,13 +37,24 @@ KPACS.Viewer/                   — WPF DICOM viewer (.NET 10, Windows only)
     ├── DicomPixelRenderer.cs     — Pixel rendering engine (8/16-bit grayscale, RGB, LUT windowing)
     └── ColorLut.cs               — Color lookup tables (Grayscale, Inverted, Hot Iron, Rainbow, Gold, Bone)
 
-KPACS.Viewer.Avalonia/          — Cross-platform DICOM viewer (.NET 10, Avalonia 11.2)
-├── App.axaml / App.axaml.cs      — Application entry point, Fluent dark theme
+KPACS.Viewer.Avalonia/          — Cross-platform study browser + DICOM viewer (.NET 10, Avalonia 11.3)
+├── App.axaml / App.axaml.cs      — Application entry point, imagebox bootstrap, Semi.Avalonia light theme
 ├── Program.cs                    — Avalonia desktop entry point
-├── MainWindow.axaml / .cs        — Application shell with toolbar, status bar, drag & drop
-├── ViewerTypes.cs                — ColorScheme and ViewerTool enumerations
+├── MainWindow.axaml / .cs        — K-PACS-style study browser with Database / Filesystem modes
+├── StudyViewerWindow.axaml / .cs — Multi-viewport study viewer with thumbnails, LUTs, stack tool
+├── ViewerTypes.cs                — ColorScheme, ViewerTool, MouseWheelMode enumerations
+├── Models/
+│   └── ImageboxModels.cs         — Browser, study, import, filesystem tree, and query models
 ├── Controls/
-│   └── DicomViewPanel.axaml / .cs— Core viewer control: zoom, pan, window/level, edge-zoom, overlays
+│   └── DicomViewPanel.axaml / .cs— Core viewer control: zoom, pan, window/level, stack scrolling, overlays
+├── Services/
+│   ├── ImageboxBootstrap.cs      — Local imagebox path setup under LocalApplicationData
+│   ├── ImageboxRepository.cs     — SQLite storage for studies, series, instances, and search
+│   ├── DicomImportService.cs     — Import into local imagebox/SQLite
+│   ├── DicomFilesystemScanService.cs — Scan-only preview of filesystem/DICOMDIR studies
+│   ├── DicomStudyDeletionService.cs  — Delete study from SQLite and stored files
+│   ├── DicomPseudonymizationService.cs — Pseudonymize imported studies in-place
+│   └── ViewerStudyContext.cs     — Study viewer input context
 └── Rendering/
     ├── DicomPixelRenderer.cs     — Pixel rendering engine (platform-independent)
     └── ColorLut.cs               — Color lookup tables (platform-independent)
@@ -73,13 +84,18 @@ A basic DICOM viewer built with **WPF** for Windows:
 - Compressed transfer syntax support (JPEG, JPEG2000, RLE via fo-dicom.Codecs)
 - Drag & drop file loading, keyboard shortcuts
 
-### ✅ Completed: Avalonia Viewer (Cross-Platform)
+### ✅ Completed: Avalonia Study Browser + Viewer (Cross-Platform)
 
-The same viewer ported to **Avalonia 11.2** for cross-platform support (Windows, Linux, macOS):
+The Avalonia application has moved beyond a single-file viewer and now includes a working **K-PACS-style local study browser** on top of the cross-platform viewer:
 
-- Feature-identical to the WPF version
-- Shares the same platform-independent rendering engine and color LUTs
-- Uses Avalonia's unified pointer events, StorageProvider file dialogs, and Fluent dark theme
+- **Database mode** backed by a local SQLite imagebox
+- **Filesystem mode** with Windows-style `Computer` root, drive browsing, folder scan, and optional DICOMDIR usage
+- **Preview-before-import workflow**: filesystem scans build preview studies first, and actual import happens only on explicit `Import` or `View`
+- **Study actions**: view, import, pseudonymize, and delete study (including disk files)
+- **Multi-viewport study viewer** with thumbnail strip, layout selection, LUT switching, and stack-tool drag behavior ported from the Delphi version
+- **Search/filter support** in both Database and Filesystem mode, including multi-select modality filtering
+- Shares the same platform-independent rendering engine and color LUTs as the WPF version
+- Uses Avalonia pointer events, StorageProvider dialogs, and Semi.Avalonia styling
 
 ### 🔲 Still To Do
 
@@ -87,8 +103,9 @@ The following major components from the original K-PACS have **not yet been port
 
 | Component | Description |
 |---|---|
-| **Study Browser** | Patient/study database, local storage management, query/retrieve UI |
-| **Import Engine** | File import, DICOMDIR import, drag & drop, non-DICOM-to-DICOM conversion |
+| **Network Query/Retrieve UI** | Remote study browser, server selection, and retrieve workflow |
+| **Email Mode** | Import/export or mail-driven workflows |
+| **Server / SCP** | C-STORE receiver, Query/Retrieve provider, service management |
 | **DICOM Server** | SCP services (C-STORE receiver, Query/Retrieve provider) |
 | **Print** | DICOM Print SCU, print preview, film layout |
 | **Report Writer** | Structured report authoring and display |
@@ -106,8 +123,10 @@ The following major components from the original K-PACS have **not yet been port
 | **Runtime** | .NET 10 |
 | **DICOM library** | [fo-dicom 5.1.3](https://github.com/fo-dicom/fo-dicom) |
 | **DICOM codecs** | [fo-dicom.Codecs 5.13.2](https://github.com/fo-dicom/fo-dicom) |
+| **SQLite** | [Microsoft.Data.Sqlite 9.0.3](https://www.nuget.org/packages/Microsoft.Data.Sqlite/) |
 | **WPF Viewer** | .NET 10 (Windows only) |
-| **Cross-platform Viewer** | [Avalonia 11.2.1](https://avaloniaui.net/) (Windows, Linux, macOS) |
+| **Cross-platform Viewer** | [Avalonia 11.3.7](https://avaloniaui.net/) (Windows, Linux, macOS) |
+| **Avalonia Theme** | [Semi.Avalonia 11.3.7.3](https://www.nuget.org/packages/Semi.Avalonia/) |
 | **Original** | Written in Delphi (Object Pascal), ~150k lines of application code |
 
 ## Building
@@ -132,6 +151,37 @@ dotnet run --project KPACS.Viewer/KPACS.Viewer.csproj
 # Avalonia viewer (any platform)
 dotnet run --project KPACS.Viewer.Avalonia/KPACS.Viewer.Avalonia.csproj
 ```
+
+## Avalonia Browser Workflow
+
+The Avalonia application currently focuses on a local K-PACS-style workflow:
+
+- **Database** — studies already imported into the local SQLite imagebox
+- **Filesystem** — browse drives/folders, scan DICOM folders or DICOMDIR media, preview studies, then import on demand
+- **Network** — placeholder tab for future query/retrieve work
+- **Email** — placeholder tab for future mail/export workflows
+
+### Local imagebox
+
+The Avalonia application stores imported studies under the current user's local application data folder:
+
+```text
+%LOCALAPPDATA%/KPACS.Viewer.Avalonia/Imagebox
+```
+
+This contains:
+
+- `imagebox.db` — SQLite metadata database
+- `Studies/` — imported DICOM files organized by Study Instance UID / Series Instance UID
+
+### Current viewer capabilities
+
+- Window/level, zoom, pan, fit-to-window, and color LUT switching
+- Stack tool with accelerated drag scrolling for series browsing
+- Thumbnail strip for jumping between series
+- Series overview panel in the browser
+- Pseudonymization of imported studies
+- Delete-study workflow that removes both database rows and stored files
 
 ## Background
 
