@@ -156,6 +156,8 @@ public sealed class DicomImportService
                 string studyUid = dataset.GetSingleValue<string>(DicomTag.StudyInstanceUID);
                 string seriesUid = dataset.GetSingleValue<string>(DicomTag.SeriesInstanceUID);
                 string sopUid = dataset.GetSingleValue<string>(DicomTag.SOPInstanceUID);
+                string sopClassUid = dataset.GetSingleValueOrDefault(DicomTag.SOPClassUID, string.Empty);
+                string modality = LegacyStudyInfoMapper.ResolveModality(dataset.GetSingleValueOrDefault(DicomTag.Modality, string.Empty), sopClassUid);
                 string targetDirectory = Path.Combine(_paths.StudiesDirectory, Sanitize(studyUid), Sanitize(seriesUid));
                 Directory.CreateDirectory(targetDirectory);
                 string extension = Path.GetExtension(filePath);
@@ -178,7 +180,7 @@ public sealed class DicomImportService
                         StudyDescription = dataset.GetSingleValueOrDefault(DicomTag.StudyDescription, string.Empty),
                         ReferringPhysician = dataset.GetSingleValueOrDefault(DicomTag.ReferringPhysicianName, string.Empty),
                         StudyDate = dataset.GetSingleValueOrDefault(DicomTag.StudyDate, string.Empty),
-                        Modalities = dataset.GetSingleValueOrDefault(DicomTag.Modality, string.Empty),
+                        Modalities = modality,
                         StoragePath = Path.Combine(_paths.StudiesDirectory, Sanitize(studyUid)),
                         ImportedAtUtc = DateTime.UtcNow,
                     };
@@ -193,7 +195,7 @@ public sealed class DicomImportService
                     {
                         StudyKey = studyKey,
                         SeriesInstanceUid = seriesUid,
-                        Modality = dataset.GetSingleValueOrDefault(DicomTag.Modality, string.Empty),
+                        Modality = modality,
                         SeriesDescription = dataset.GetSingleValueOrDefault(DicomTag.SeriesDescription, string.Empty),
                         SeriesNumber = dataset.GetSingleValueOrDefault(DicomTag.SeriesNumber, 0),
                         InstanceCount = 0,
@@ -207,6 +209,7 @@ public sealed class DicomImportService
                 {
                     SeriesKey = seriesKey,
                     SopInstanceUid = sopUid,
+                    SopClassUid = sopClassUid,
                     FilePath = destinationPath,
                     InstanceNumber = dataset.GetSingleValueOrDefault(DicomTag.InstanceNumber, 0),
                     FrameCount = dataset.GetSingleValueOrDefault(DicomTag.NumberOfFrames, 1),

@@ -22,4 +22,8 @@
     <PackageReference Include="Semi.Avalonia.DataGrid" Version="11.3.7.3" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\KPACS.DCMClasses\KPACS.DCMClasses.csproj" />
+  </ItemGroup>
+
 </Project>

@@ -120,6 +120,8 @@ public sealed class DicomFilesystemScanService
                     string studyUid = dataset.GetSingleValue<string>(DicomTag.StudyInstanceUID);
                     string seriesUid = dataset.GetSingleValue<string>(DicomTag.SeriesInstanceUID);
                     string sopUid = dataset.GetSingleValue<string>(DicomTag.SOPInstanceUID);
+                    string sopClassUid = dataset.GetSingleValueOrDefault(DicomTag.SOPClassUID, string.Empty);
+                    string modality = LegacyStudyInfoMapper.ResolveModality(dataset.GetSingleValueOrDefault(DicomTag.Modality, string.Empty), sopClassUid);
 
                     if (!studyLookup.TryGetValue(studyUid, out StudyDetails? details))
                     {
@@ -133,7 +135,7 @@ public sealed class DicomFilesystemScanService
                             StudyDescription = dataset.GetSingleValueOrDefault(DicomTag.StudyDescription, string.Empty),
                             ReferringPhysician = dataset.GetSingleValueOrDefault(DicomTag.ReferringPhysicianName, string.Empty),
                             StudyDate = dataset.GetSingleValueOrDefault(DicomTag.StudyDate, string.Empty),
-                            Modalities = dataset.GetSingleValueOrDefault(DicomTag.Modality, string.Empty),
+                            Modalities = modality,
                             StoragePath = sourcePath,
                             ImportedAtUtc = DateTime.UtcNow,
                             IsPreviewOnly = true,
@@ -155,7 +157,7 @@ public sealed class DicomFilesystemScanService
                         {
                             StudyKey = details.Study.StudyKey,
                             SeriesInstanceUid = seriesUid,
-                            Modality = dataset.GetSingleValueOrDefault(DicomTag.Modality, string.Empty),
+                            Modality = modality,
                             SeriesDescription = dataset.GetSingleValueOrDefault(DicomTag.SeriesDescription, string.Empty),
                             SeriesNumber = dataset.GetSingleValueOrDefault(DicomTag.SeriesNumber, 0),
                         };
@@ -167,6 +169,7 @@ public sealed class DicomFilesystemScanService
                     series.Instances.Add(new InstanceRecord
                     {
                         SopInstanceUid = sopUid,
+                        SopClassUid = sopClassUid,
                         FilePath = filePath,
                         InstanceNumber = dataset.GetSingleValueOrDefault(DicomTag.InstanceNumber, 0),
                         FrameCount = dataset.GetSingleValueOrDefault(DicomTag.NumberOfFrames, 1),
@@ -197,6 +200,8 @@ public sealed class DicomFilesystemScanService
                     });
                     series.InstanceCount = series.Instances.Count;
                 }
+
+                details.PopulateLegacyStudyInfo();
             }
 
             result.Studies.Sort((left, right) =>

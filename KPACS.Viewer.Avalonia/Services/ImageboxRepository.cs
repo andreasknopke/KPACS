@@ -214,6 +214,8 @@ public sealed class ImageboxRepository
             }
         }
 
+        details.PopulateLegacyStudyInfo();
+
         return details;
     }
 

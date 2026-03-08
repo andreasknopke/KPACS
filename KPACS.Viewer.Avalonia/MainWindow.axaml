@@ -156,11 +156,17 @@
                         <TextBlock x:Name="StatusText" FontFamily="Consolas" Foreground="#FF222222" />
                 </Border>
 
-                <Grid Margin="8" ColumnDefinitions="74,220,*" RowDefinitions="*,190">
+                <Grid x:Name="BrowserContentGrid" Margin="8" RowDefinitions="*,190">
+                        <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="74" />
+                                <ColumnDefinition Width="220" />
+                                <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
                         <Border Grid.RowSpan="2" Classes="section" Padding="6">
                                 <StackPanel Spacing="8">
                                         <TextBlock Text="Actions" FontWeight="Bold" Foreground="#FF333333" HorizontalAlignment="Center" Margin="0,0,0,4" />
                                         <Button Classes="action" Content="View" Click="OnOpenViewerClick" />
+                                        <Button x:Name="TogglePatientPanelButton" Content="Patients" Click="OnTogglePatientPanelClick" />
                                         <Button x:Name="ImportActionButton" Classes="action" Content="Import" Click="OnImportSelectedClick" />
                                         <Button x:Name="BrowseFilesystemButton" Classes="action" Content="Browse" Click="OnBrowseFilesystemRootClick" />
                                         <Button x:Name="ModifyActionButton" Classes="action" Content="Modify" Click="OnPseudonymizeClick" />

@@ -13,6 +13,7 @@ public partial class MainWindow : Window
 {
     private readonly App _app;
     private bool _uiReady;
+    private bool _showPatientPanel = true;
     private BrowserMode _browserMode = BrowserMode.Database;
     private List<StudyListItem> _allStudies = [];
     private List<StudyListItem> _filesystemScannedStudies = [];
@@ -170,6 +171,13 @@ public partial class MainWindow : Window
 
     private void BuildPatientRows()
     {
+        if (_browserMode != BrowserMode.Database || !_showPatientPanel)
+        {
+            _patients.Clear();
+            PatientGrid.SelectedItem = null;
+            return;
+        }
+
         string? selectedKey = (PatientGrid.SelectedItem as PatientRow)?.SelectionKey;
 
         var groupedPatients = _allStudies
@@ -209,7 +217,10 @@ public partial class MainWindow : Window
 
     private void ApplyPatientFilter()
     {
-        string? selectedKey = (PatientGrid.SelectedItem as PatientRow)?.SelectionKey;
+        string? selectedKey = _browserMode == BrowserMode.Database && _showPatientPanel
+            ? (PatientGrid.SelectedItem as PatientRow)?.SelectionKey
+            : null;
+
         List<StudyListItem> visibleStudies = string.IsNullOrWhiteSpace(selectedKey)
             ? _allStudies
             : _allStudies.Where(study => $"{study.PatientId}\u001F{study.PatientName}" == selectedKey).ToList();
@@ -229,8 +240,10 @@ public partial class MainWindow : Window
         StudySummaryText.Text = _studies.Count == 0
             ? "No studies match the current selection."
             : _browserMode == BrowserMode.Filesystem
-                ? $"{_studies.Count} preview studies for the selected patient. Double-click to import and open."
-                : $"{_studies.Count} studies for the selected patient. Double-click a study to open it.";
+                ? $"{_studies.Count} preview studies match the current filter. Double-click to import and open."
+                : _showPatientPanel
+                    ? $"{_studies.Count} studies for the selected patient. Double-click a study to open it."
+                    : $"{_studies.Count} studies match the current filter. Double-click a study to open it.";
     }
 
     private async Task<StudyDetails?> LoadStudyDetailsForSelectionAsync(StudyListItem selectedStudy)
@@ -351,6 +364,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        await RefreshCurrentModeAsync();
+    }
+
+    private async void OnTogglePatientPanelClick(object? sender, RoutedEventArgs e)
+    {
+        _showPatientPanel = !_showPatientPanel;
+        UpdateModeUi();
         await RefreshCurrentModeAsync();
     }
 
@@ -642,8 +662,10 @@ public partial class MainWindow : Window
         };
 
         if (PatientPanel is null
+            || BrowserContentGrid is null
             || FilesystemPanel is null
             || ModePlaceholderPanel is null
+            || TogglePatientPanelButton is null
             || BrowseFilesystemButton is null
             || ImportActionButton is null
             || ModifyActionButton is null
@@ -667,10 +689,18 @@ public partial class MainWindow : Window
         bool databaseMode = _browserMode == BrowserMode.Database;
         bool filesystemMode = _browserMode == BrowserMode.Filesystem;
         bool placeholderMode = _browserMode is BrowserMode.Network or BrowserMode.Email;
+        bool showPatientPanel = databaseMode && _showPatientPanel;
+        bool showMiddlePane = showPatientPanel || filesystemMode || placeholderMode;
 
-        PatientPanel.IsVisible = databaseMode;
+        PatientPanel.IsVisible = showPatientPanel;
         FilesystemPanel.IsVisible = filesystemMode;
         ModePlaceholderPanel.IsVisible = placeholderMode;
+        if (BrowserContentGrid.ColumnDefinitions.Count > 1)
+        {
+            BrowserContentGrid.ColumnDefinitions[1].Width = showMiddlePane ? new GridLength(220) : new GridLength(0);
+        }
+        TogglePatientPanelButton.IsVisible = databaseMode;
+        TogglePatientPanelButton.Content = showPatientPanel ? "Hide patients" : "Show patients";
         BrowseFilesystemButton.IsEnabled = filesystemMode;
         ImportActionButton.IsEnabled = filesystemMode;
         ModifyActionButton.IsEnabled = databaseMode;
@@ -694,7 +724,7 @@ public partial class MainWindow : Window
 
     private void OnPatientSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
-        if (_browserMode == BrowserMode.Database || _browserMode == BrowserMode.Filesystem)
+        if (_browserMode == BrowserMode.Database && _showPatientPanel)
         {
             ApplyPatientFilter();
         }
@@ -702,7 +732,7 @@ public partial class MainWindow : Window
 
     private async void OnStudySelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
-        if (StudyGrid.SelectedItem is StudyListItem study)
+        if (_browserMode == BrowserMode.Database && _showPatientPanel && StudyGrid.SelectedItem is StudyListItem study)
         {
             PatientRow? row = _patients.FirstOrDefault(patient => patient.SelectionKey == $"{study.PatientId}\u001F{study.PatientName}");
             if (row is not null && !ReferenceEquals(PatientGrid.SelectedItem, row))

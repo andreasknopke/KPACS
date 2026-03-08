@@ -4,6 +4,8 @@ A modern C# port of key components from **K-PACS**, the free DICOM workstation I
 
 This project aims to bring the core DICOM infrastructure into the .NET ecosystem, built on top of [fo-dicom](https://github.com/fo-dicom/fo-dicom) and targeting **.NET 10**.
 
+The old **WPF viewer has been retired from this repository**. Active UI development now happens only in the **Avalonia** application.
+
 ## Project Structure
 
 ```
@@ -26,16 +28,6 @@ KPACS.DCMClasses/               — Core DICOM class library (.NET 10, fo-dicom 
     ├── StudyInfo.cs              — Study / Series / Image info classes
     ├── PrintConfig.cs            — DICOM print configuration
     └── WorklistItem.cs           — Modality worklist item
-
-KPACS.Viewer/                   — WPF DICOM viewer (.NET 10, Windows only)
-├── App.xaml / App.xaml.cs        — Application entry point, dark theme
-├── MainWindow.xaml / .cs         — Application shell with toolbar, status bar, drag & drop
-├── ViewerTypes.cs                — ColorScheme and ViewerTool enumerations
-├── Controls/
-│   └── DicomViewPanel.xaml / .cs — Core viewer control: zoom, pan, window/level, edge-zoom, overlays
-└── Rendering/
-    ├── DicomPixelRenderer.cs     — Pixel rendering engine (8/16-bit grayscale, RGB, LUT windowing)
-    └── ColorLut.cs               — Color lookup tables (Grayscale, Inverted, Hot Iron, Rainbow, Gold, Bone)
 
 KPACS.Viewer.Avalonia/          — Cross-platform study browser + DICOM viewer (.NET 10, Avalonia 11.3)
 ├── App.axaml / App.axaml.cs      — Application entry point, imagebox bootstrap, Semi.Avalonia light theme
@@ -73,17 +65,6 @@ The entire **DCMClasses** package has been ported — this is the foundational D
 - **DICOMDIR** — creation and reading of media directory structures
 - **Utility functions** — UID generation, date/time conversions, patient name parsing, age calculation
 
-### ✅ Completed: WPF Viewer (Windows)
-
-A basic DICOM viewer built with **WPF** for Windows:
-
-- Window/level adjustment (right-click drag)
-- Integrated zoom/pan (edge-zone drag = zoom, center-zone drag = pan, mouse wheel zoom)
-- 6 color lookup tables (Grayscale, Inverted, Hot Iron, Rainbow, Gold, Bone)
-- 4-corner DICOM overlay text (patient name, study info, window values, zoom/dimensions)
-- Compressed transfer syntax support (JPEG, JPEG2000, RLE via fo-dicom.Codecs)
-- Drag & drop file loading, keyboard shortcuts
-
 ### ✅ Completed: Avalonia Study Browser + Viewer (Cross-Platform)
 
 The Avalonia application has moved beyond a single-file viewer and now includes a working **K-PACS-style local study browser** on top of the cross-platform viewer:
@@ -94,7 +75,7 @@ The Avalonia application has moved beyond a single-file viewer and now includes 
 - **Study actions**: view, import, pseudonymize, and delete study (including disk files)
 - **Multi-viewport study viewer** with thumbnail strip, layout selection, LUT switching, and stack-tool drag behavior ported from the Delphi version
 - **Search/filter support** in both Database and Filesystem mode, including multi-select modality filtering
-- Shares the same platform-independent rendering engine and color LUTs as the WPF version
+- Shares the same platform-independent rendering engine and color LUTs across the current C# viewer stack
 - Uses Avalonia pointer events, StorageProvider dialogs, and Semi.Avalonia styling
 
 ### 🔲 Still To Do
@@ -124,7 +105,6 @@ The following major components from the original K-PACS have **not yet been port
 | **DICOM library** | [fo-dicom 5.1.3](https://github.com/fo-dicom/fo-dicom) |
 | **DICOM codecs** | [fo-dicom.Codecs 5.13.2](https://github.com/fo-dicom/fo-dicom) |
 | **SQLite** | [Microsoft.Data.Sqlite 9.0.3](https://www.nuget.org/packages/Microsoft.Data.Sqlite/) |
-| **WPF Viewer** | .NET 10 (Windows only) |
 | **Cross-platform Viewer** | [Avalonia 11.3.7](https://avaloniaui.net/) (Windows, Linux, macOS) |
 | **Avalonia Theme** | [Semi.Avalonia 11.3.7.3](https://www.nuget.org/packages/Semi.Avalonia/) |
 | **Original** | Written in Delphi (Object Pascal), ~150k lines of application code |
@@ -135,9 +115,6 @@ The following major components from the original K-PACS have **not yet been port
 # Core library
 dotnet build KPACS.DCMClasses/KPACS.DCMClasses.csproj
 
-# WPF viewer (Windows only)
-dotnet build KPACS.Viewer/KPACS.Viewer.csproj
-
 # Cross-platform Avalonia viewer
 dotnet build KPACS.Viewer.Avalonia/KPACS.Viewer.Avalonia.csproj
 ```
@@ -145,9 +122,6 @@ dotnet build KPACS.Viewer.Avalonia/KPACS.Viewer.Avalonia.csproj
 ## Running
 
 ```bash
-# WPF viewer (Windows only)
-dotnet run --project KPACS.Viewer/KPACS.Viewer.csproj
-
 # Avalonia viewer (any platform)
 dotnet run --project KPACS.Viewer.Avalonia/KPACS.Viewer.Avalonia.csproj
 ```

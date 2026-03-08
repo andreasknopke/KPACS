@@ -6,3 +6,6 @@ obj/
 *.cache
 *.log
 *.vs/
+
+# Retired local-only project
+KPACS.Viewer/

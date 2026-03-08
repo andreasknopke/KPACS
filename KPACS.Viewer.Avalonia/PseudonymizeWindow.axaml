@@ -2,13 +2,26 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="KPACS.Viewer.PseudonymizeWindow"
         Title="Pseudonymize Study"
-        Width="420" Height="280"
+        Width="440"
+        SizeToContent="Height"
+        MinHeight="320"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
-        Background="#FF232323">
-    <Grid RowDefinitions="Auto,*,Auto" Margin="16">
+        Background="#FFEAEAEA">
+    <Window.Styles>
+        <Style Selector="TextBlock">
+            <Setter Property="Foreground" Value="#FF333333" />
+        </Style>
+        <Style Selector="TextBox">
+            <Setter Property="Background" Value="#FFF7F7F7" />
+            <Setter Property="Foreground" Value="#FF202020" />
+            <Setter Property="BorderBrush" Value="#FF8C8C8C" />
+            <Setter Property="Height" Value="30" />
+        </Style>
+    </Window.Styles>
+    <Border Margin="12" Padding="16" Background="#FFF5F5F5" BorderBrush="#FFB5B5B5" BorderThickness="1" CornerRadius="6">
+    <Grid RowDefinitions="Auto,*,Auto">
         <TextBlock Text="Update the patient-identifying headers in the files and SQLite database."
-                   Foreground="#FFCCCCCC"
                    TextWrapping="Wrap" />
 
                 <Grid Grid.Row="1" Margin="0,16,0,16"
@@ -26,9 +39,10 @@
                         <TextBox Grid.Row="3" Grid.Column="1" x:Name="ReferringPhysicianBox" Margin="10,10,0,0" />
         </Grid>
 
-        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
-            <Button Content="Cancel" Click="OnCancelClick" MinWidth="90" />
-            <Button Content="Apply" Click="OnApplyClick" MinWidth="90" Classes="accent" />
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,8,0,0">
+            <Button Content="Cancel" Click="OnCancelClick" MinWidth="96" MinHeight="32" />
+            <Button Content="Apply" Click="OnApplyClick" MinWidth="96" MinHeight="32" Classes="accent" />
         </StackPanel>
     </Grid>
+    </Border>
 </Window>

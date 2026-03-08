@@ -74,6 +74,7 @@ public sealed class InstanceRecord
     public long InstanceKey { get; init; }
     public long SeriesKey { get; init; }
     public string SopInstanceUid { get; init; } = string.Empty;
+    public string SopClassUid { get; set; } = string.Empty;
     public string FilePath { get; set; } = string.Empty;
     public int InstanceNumber { get; set; }
     public int FrameCount { get; set; }
@@ -83,6 +84,7 @@ public sealed class StudyDetails
 {
     public required StudyListItem Study { get; init; }
     public List<SeriesRecord> Series { get; } = [];
+    public KPACS.DCMClasses.Models.StudyInfo? LegacyStudy { get; set; }
 }
 
 public sealed class ImageboxTreeNode
