@@ -102,6 +102,7 @@ The following major components from the original K-PACS have **not yet been port
 |---|---|
 | **Language** | C# 13 |
 | **Runtime** | .NET 10 |
+| **K-PACS DICOM classes** | Self-developed and ported K-PACS DICOM classes in `KPACS.DCMClasses`, serving as the legacy-port foundation and primary domain model layer |
 | **DICOM library** | [fo-dicom 5.1.3](https://github.com/fo-dicom/fo-dicom) |
 | **DICOM codecs** | [fo-dicom.Codecs 5.13.2](https://github.com/fo-dicom/fo-dicom) |
 | **SQLite** | [Microsoft.Data.Sqlite 9.0.3](https://www.nuget.org/packages/Microsoft.Data.Sqlite/) |
