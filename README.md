@@ -78,6 +78,16 @@ The Avalonia application has moved beyond a single-file viewer and now includes 
 - Shares the same platform-independent rendering engine and color LUTs across the current C# viewer stack
 - Uses Avalonia pointer events, StorageProvider dialogs, and Semi.Avalonia styling
 
+### Screenshots
+
+#### Study Browser
+
+![K-PACS.neo Avalonia Study Browser](Images/Study%20Browser.png)
+
+#### Viewer / Workflow Detail
+
+![K-PACS.neo Avalonia viewer workflow detail](Images/Screenshot%202026-03-08%20210211.png)
+
 ### 🔲 Still To Do
 
 The following major components from the original K-PACS have **not yet been ported**:
