@@ -6,6 +6,7 @@ public enum MeasurementKind
 {
     Line,
     Angle,
+    Annotation,
     RectangleRoi,
     PolygonRoi,
 }
@@ -19,13 +20,15 @@ public sealed record StudyMeasurement(
     string ReferencedSopInstanceUid,
     string FrameOfReferenceUid,
     string AcquisitionNumber,
-    MeasurementAnchor[] Anchors)
+    MeasurementAnchor[] Anchors,
+    string AnnotationText = "")
 {
     public static StudyMeasurement Create(
         MeasurementKind kind,
         string sourceFilePath,
         DicomSpatialMetadata? metadata,
-        IReadOnlyList<Point> imagePoints)
+        IReadOnlyList<Point> imagePoints,
+        string annotationText = "")
     {
         ArgumentNullException.ThrowIfNull(imagePoints);
 
@@ -38,7 +41,8 @@ public sealed record StudyMeasurement(
             metadata?.AcquisitionNumber ?? string.Empty,
             imagePoints.Select(point => new MeasurementAnchor(
                 point,
-                metadata?.PatientPointFromPixel(point))).ToArray());
+                metadata?.PatientPointFromPixel(point))).ToArray(),
+            annotationText);
     }
 
     public StudyMeasurement WithAnchors(DicomSpatialMetadata? metadata, IReadOnlyList<Point> imagePoints) =>
@@ -48,6 +52,9 @@ public sealed record StudyMeasurement(
                 .Select(point => new MeasurementAnchor(point, metadata?.PatientPointFromPixel(point)))
                 .ToArray(),
         };
+
+    public StudyMeasurement WithAnnotationText(string annotationText) =>
+        this with { AnnotationText = annotationText ?? string.Empty };
 
     public bool TryProjectTo(DicomSpatialMetadata? metadata, out Point[] imagePoints)
     {

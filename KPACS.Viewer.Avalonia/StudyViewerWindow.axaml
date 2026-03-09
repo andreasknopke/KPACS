@@ -55,24 +55,19 @@
             <Setter Property="Padding" Value="12,8" />
             <Setter Property="HorizontalAlignment" Value="Stretch" />
         </Style>
+        <Style Selector="TextBlock.popupSectionTitle">
+            <Setter Property="Foreground" Value="#FFBDBDBD" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
     </Window.Styles>
 
     <Grid RowDefinitions="Auto,Auto,*">
         <Border Grid.Row="0" Background="#FF2A2A2A" Padding="10,8">
-            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+            <Grid RowDefinitions="Auto,Auto">
                 <TextBlock x:Name="StudyTitleText"
                            FontSize="18" FontWeight="SemiBold" Foreground="White" />
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="LUT" Foreground="#FFBDBDBD" VerticalAlignment="Center" />
-                    <ComboBox x:Name="LutBox" Width="120" SelectionChanged="OnLutChanged">
-                        <ComboBoxItem Content="Grayscale" Tag="1" IsSelected="True" />
-                        <ComboBoxItem Content="Inverted" Tag="-1" />
-                        <ComboBoxItem Content="Hot Iron" Tag="2" />
-                        <ComboBoxItem Content="Rainbow" Tag="3" />
-                        <ComboBoxItem Content="Gold" Tag="5" />
-                        <ComboBoxItem Content="Bone" Tag="10" />
-                    </ComboBox>
-                </StackPanel>
                 <TextBlock x:Name="StudySubtitleText" Grid.Row="1" Margin="0,6,0,0"
                            Foreground="#FFAAAAAA" FontSize="12" />
             </Grid>
@@ -108,27 +103,49 @@
                     IsHitTestVisible="False"
                     PointerEntered="OnActionToolbarPointerEntered"
                     PointerExited="OnActionToolbarPointerExited">
-                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*" ColumnSpacing="8">
+                <Grid ColumnDefinitions="*,*,*,*,*,*" ColumnSpacing="10">
                     <ToggleButton x:Name="ActionScrollButton" Classes="actionMode" Content="Scroll/Stack" Click="OnActionScrollClick" />
                     <ToggleButton x:Name="ActionZoomPanButton" Grid.Column="1" Classes="actionMode" Content="Zoom-Pan" Click="OnActionZoomPanClick" />
                     <ToggleButton x:Name="ActionWindowButton" Grid.Column="2" Classes="actionMode" Content="Window" Click="OnActionWindowClick" />
                     <ToggleButton x:Name="ActionToolsButton" Grid.Column="3" Classes="actionMode" Content="Tools" Click="OnActionToolsClick" />
                     <ToggleButton x:Name="ActionLayoutButton" Grid.Column="4" Classes="actionMode" Content="Layout" Click="OnActionLayoutClick" />
                     <ToggleButton x:Name="OverlayToggleButton" Grid.Column="5" Classes="overlayToggle" Content="Overlay" IsChecked="True" Click="OnOverlayToggleClick" />
-                    <TextBlock Grid.Column="6" x:Name="ViewerStatusText" HorizontalAlignment="Right"
-                               VerticalAlignment="Center" Foreground="#FFAAAAAA" Margin="12,0,0,0" />
                 </Grid>
             </Border>
+
+            <TextBlock x:Name="ViewerStatusText"
+                       IsVisible="False"
+                       Width="0"
+                       Height="0" />
 
             <Popup x:Name="WindowPresetPopup" Placement="Top" IsLightDismissEnabled="True" Closed="OnAnyActionPopupClosed">
                 <Border Background="#F0262626" BorderBrush="#FF5A5A5A" BorderThickness="1" CornerRadius="8" Padding="8"
                         PointerEntered="OnActionToolbarPointerEntered" PointerExited="OnActionToolbarPointerExited">
-                    <StackPanel Width="180" Spacing="6">
-                        <Button Classes="popupAction" Content="Brain" Tag="40|80" Click="OnWindowPresetSelected" />
-                        <Button Classes="popupAction" Content="Abdomen" Tag="60|400" Click="OnWindowPresetSelected" />
-                        <Button Classes="popupAction" Content="Lung" Tag="-600|1500" Click="OnWindowPresetSelected" />
-                        <Button Classes="popupAction" Content="Bone" Tag="300|2000" Click="OnWindowPresetSelected" />
-                        <Button Classes="popupAction" Content="Reset" Tag="RESET" Click="OnWindowPresetSelected" />
+                    <StackPanel Width="364" Spacing="10">
+                        <StackPanel Spacing="6">
+                            <TextBlock Classes="popupSectionTitle" Text="Window" />
+                            <WrapPanel ItemWidth="110" Orientation="Horizontal">
+                                <Button Classes="popupAction" Content="Brain" Tag="40|80" Click="OnWindowPresetSelected" />
+                                <Button Classes="popupAction" Content="Abdomen" Tag="60|400" Click="OnWindowPresetSelected" />
+                                <Button Classes="popupAction" Content="Lung" Tag="-600|1500" Click="OnWindowPresetSelected" />
+                                <Button Classes="popupAction" Content="Bone" Tag="300|2000" Click="OnWindowPresetSelected" />
+                                <Button Classes="popupAction" Content="Reset" Tag="RESET" Click="OnWindowPresetSelected" />
+                            </WrapPanel>
+                        </StackPanel>
+
+                        <Border Height="1" Background="#404A4A4A" />
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Classes="popupSectionTitle" Text="LUT" />
+                            <WrapPanel ItemWidth="110" Orientation="Horizontal">
+                                <Button Classes="popupAction" Content="Grayscale" Tag="1" Click="OnWindowLutSelected" />
+                                <Button Classes="popupAction" Content="Inverted" Tag="-1" Click="OnWindowLutSelected" />
+                                <Button Classes="popupAction" Content="Hot Iron" Tag="2" Click="OnWindowLutSelected" />
+                                <Button Classes="popupAction" Content="Rainbow" Tag="3" Click="OnWindowLutSelected" />
+                                <Button Classes="popupAction" Content="Gold" Tag="5" Click="OnWindowLutSelected" />
+                                <Button Classes="popupAction" Content="Bone" Tag="10" Click="OnWindowLutSelected" />
+                            </WrapPanel>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
             </Popup>
@@ -139,6 +156,7 @@
                     <StackPanel Width="190" Spacing="6">
                         <Button Classes="popupAction" Content="Line" Tag="Line" Click="OnMeasurementToolPopupClick" />
                         <Button Classes="popupAction" Content="Angle" Tag="Angle" Click="OnMeasurementToolPopupClick" />
+                        <Button Classes="popupAction" Content="Annotation" Tag="Annotation" Click="OnMeasurementToolPopupClick" />
                         <Button Classes="popupAction" Content="Rectangle ROI" Tag="RectangleRoi" Click="OnMeasurementToolPopupClick" />
                         <Button Classes="popupAction" Content="Polygon ROI" Tag="PolygonRoi" Click="OnMeasurementToolPopupClick" />
                         <Button Classes="popupAction" Content="Pixel lens" Tag="PixelLens" Click="OnMeasurementToolPopupClick" />

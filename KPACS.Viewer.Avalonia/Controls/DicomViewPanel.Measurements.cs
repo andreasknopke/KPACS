@@ -34,13 +34,23 @@ public partial class DicomViewPanel
 
         if (tool == MeasurementTool.None)
         {
-            _measurementDraft = null;
-            _measurementEditSession = null;
+            CancelMeasurementInteraction();
         }
 
         UpdateMeasurementPresentation();
         UpdateInteractiveCursor();
         UpdateSecondaryCaptureButton();
+    }
+
+    public void CancelMeasurementInteraction()
+    {
+        _measurementDraft = null;
+        _measurementEditSession = null;
+        PixelLensPanel.IsVisible = false;
+        _capturedPointer?.Capture(null);
+        _capturedPointer = null;
+        UpdateMeasurementPresentation();
+        UpdateInteractiveCursor();
     }
 
     public void SetMeasurements(IEnumerable<StudyMeasurement> measurements, Guid? selectedMeasurementId)
@@ -55,10 +65,7 @@ public partial class DicomViewPanel
 
     private void ResetMeasurementStateForNewImage()
     {
-        _measurementDraft = null;
-        _measurementEditSession = null;
-        PixelLensPanel.IsVisible = false;
-        UpdateMeasurementPresentation();
+        CancelMeasurementInteraction();
     }
 
     private void UpdateMeasurementPresentation()
@@ -117,6 +124,10 @@ public partial class DicomViewPanel
         {
             case MeasurementTool.Line:
                 StartDragMeasurement(MeasurementKind.Line, imagePoint, e.Pointer);
+                e.Handled = true;
+                return true;
+            case MeasurementTool.Annotation:
+                StartDragMeasurement(MeasurementKind.Annotation, imagePoint, e.Pointer);
                 e.Handled = true;
                 return true;
             case MeasurementTool.RectangleRoi:
@@ -439,6 +450,7 @@ public partial class DicomViewPanel
             MeasurementKind.Angle =>
                 DistanceToSegment(controlPoint, rendered.ControlPoints[0], rendered.ControlPoints[1]) <= threshold ||
                 DistanceToSegment(controlPoint, rendered.ControlPoints[1], rendered.ControlPoints[2]) <= threshold,
+            MeasurementKind.Annotation => DistanceToSegment(controlPoint, rendered.ControlPoints[0], rendered.ControlPoints[1]) <= threshold,
             MeasurementKind.RectangleRoi =>
                 BuildRect(rendered.ControlPoints[0], rendered.ControlPoints[1]).Inflate(threshold).Contains(controlPoint),
             MeasurementKind.PolygonRoi =>
@@ -498,6 +510,10 @@ public partial class DicomViewPanel
                 AddLine(rendered.ControlPoints[1], rendered.ControlPoints[2], stroke, 2);
                 AddMeasurementLabel(rendered, GetAngleMeasurementText(rendered.ImagePoints), rendered.ControlPoints[1]);
                 break;
+            case MeasurementKind.Annotation:
+                AddArrow(rendered.ControlPoints[1], rendered.ControlPoints[0], stroke, 2);
+                AddMeasurementLabel(rendered, rendered.Measurement.AnnotationText, rendered.ControlPoints[1]);
+                break;
             case MeasurementKind.RectangleRoi:
                 Rect rect = BuildRect(rendered.ControlPoints[0], rendered.ControlPoints[1]);
                 var rectangle = new Rectangle
@@ -545,7 +561,7 @@ public partial class DicomViewPanel
         IBrush stroke = new SolidColorBrush(Color.Parse("#FFFFDD00"));
         IReadOnlyList<Point> previewPoints = _measurementDraft.Kind switch
         {
-            MeasurementKind.Line or MeasurementKind.RectangleRoi => [_measurementDraft.Points[0], _measurementDraft.CurrentPoint],
+            MeasurementKind.Line or MeasurementKind.Annotation or MeasurementKind.RectangleRoi => [_measurementDraft.Points[0], _measurementDraft.CurrentPoint],
             MeasurementKind.Angle when _measurementDraft.Points.Count == 1 => [_measurementDraft.Points[0], _measurementDraft.CurrentPoint],
             MeasurementKind.Angle => [_measurementDraft.Points[0], _measurementDraft.Points[1], _measurementDraft.CurrentPoint],
             MeasurementKind.PolygonRoi => [.. _measurementDraft.Points, _measurementDraft.CurrentPoint],
@@ -557,6 +573,10 @@ public partial class DicomViewPanel
         if (_measurementDraft.Kind == MeasurementKind.Line && controlPoints.Length == 2)
         {
             AddLine(controlPoints[0], controlPoints[1], stroke, 1.5);
+        }
+        else if (_measurementDraft.Kind == MeasurementKind.Annotation && controlPoints.Length == 2)
+        {
+            AddArrow(controlPoints[1], controlPoints[0], stroke, 1.5);
         }
         else if (_measurementDraft.Kind == MeasurementKind.RectangleRoi && controlPoints.Length == 2)
         {
@@ -637,6 +657,37 @@ public partial class DicomViewPanel
             Stroke = stroke,
             StrokeThickness = thickness,
         });
+    }
+
+    private void AddArrow(Point start, Point tip, IBrush stroke, double thickness)
+    {
+        AddLine(start, tip, stroke, thickness);
+
+        Vector direction = start - tip;
+        double length = Math.Sqrt((direction.X * direction.X) + (direction.Y * direction.Y));
+        if (length < 0.001)
+        {
+            return;
+        }
+
+        Vector unit = new(direction.X / length, direction.Y / length);
+        const double arrowLength = 12.0;
+        const double arrowWidth = 6.0;
+
+        Point basePoint = new(
+            tip.X + (unit.X * arrowLength),
+            tip.Y + (unit.Y * arrowLength));
+
+        Vector normal = new(-unit.Y, unit.X);
+        Point left = new(
+            basePoint.X + (normal.X * arrowWidth),
+            basePoint.Y + (normal.Y * arrowWidth));
+        Point right = new(
+            basePoint.X - (normal.X * arrowWidth),
+            basePoint.Y - (normal.Y * arrowWidth));
+
+        AddLine(tip, left, stroke, thickness);
+        AddLine(tip, right, stroke, thickness);
     }
 
     private void AddHandle(Point point, IBrush stroke, double radius = 4.5)

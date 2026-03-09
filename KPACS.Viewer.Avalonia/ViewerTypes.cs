@@ -49,6 +49,7 @@ public enum MeasurementTool
     PixelLens,
     Line,
     Angle,
+    Annotation,
     RectangleRoi,
     PolygonRoi,
     Modify,

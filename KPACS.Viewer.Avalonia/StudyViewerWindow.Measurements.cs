@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using KPACS.Viewer.Controls;
 using KPACS.Viewer.Models;
+using KPACS.Viewer.Windows;
 
 namespace KPACS.Viewer;
 
@@ -81,12 +82,33 @@ public partial class StudyViewerWindow
         }
     }
 
-    private void OnPanelMeasurementCreated(StudyMeasurement measurement)
+    private async void OnPanelMeasurementCreated(StudyMeasurement measurement)
     {
         _studyMeasurements.RemoveAll(existing => existing.Id == measurement.Id);
         _studyMeasurements.Add(measurement);
         _selectedMeasurementId = measurement.Id;
         RefreshMeasurementPanels();
+
+        if (measurement.Kind != MeasurementKind.Annotation)
+        {
+            return;
+        }
+
+        var dialog = new AnnotationTextWindow(measurement.AnnotationText);
+        string? annotationText = await dialog.ShowDialog<string?>(this);
+        if (annotationText is null)
+        {
+            return;
+        }
+
+        StudyMeasurement updatedMeasurement = measurement.WithAnnotationText(annotationText);
+        int index = _studyMeasurements.FindIndex(existing => existing.Id == measurement.Id);
+        if (index >= 0)
+        {
+            _studyMeasurements[index] = updatedMeasurement;
+            _selectedMeasurementId = updatedMeasurement.Id;
+            RefreshMeasurementPanels();
+        }
     }
 
     private void OnPanelMeasurementUpdated(StudyMeasurement measurement)
@@ -133,6 +155,7 @@ public partial class StudyViewerWindow
         MeasurementTool.PixelLens => "Pixel lens",
         MeasurementTool.Line => "Line",
         MeasurementTool.Angle => "Angle",
+        MeasurementTool.Annotation => "Annotation",
         MeasurementTool.RectangleRoi => "Rectangle ROI",
         MeasurementTool.PolygonRoi => "Polygon ROI",
         MeasurementTool.Modify => "Modify",

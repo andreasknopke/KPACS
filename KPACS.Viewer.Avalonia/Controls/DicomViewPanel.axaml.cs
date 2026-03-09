@@ -13,6 +13,7 @@
 // ------------------------------------------------------------------------------------------------
 
 using System.Runtime.InteropServices;
+using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -35,6 +36,10 @@ namespace KPACS.Viewer.Controls;
 /// </summary>
 public partial class DicomViewPanel : UserControl
 {
+    private static readonly DicomTag SharedFunctionalGroupsSequenceTag = new(0x5200, 0x9229);
+    private static readonly DicomTag PerFrameFunctionalGroupsSequenceTag = new(0x5200, 0x9230);
+    private static readonly DicomTag FrameVoILutSequenceTag = new(0x0028, 0x9132);
+
     private static Cursor? s_windowCursor;
     private static readonly object s_windowCursorLock = new();
 
@@ -316,10 +321,7 @@ public partial class DicomViewPanel : UserControl
             }
 
             // --- Window Center / Width ---
-            double wc = dataset.GetSingleValueOrDefault<double>(DicomTag.WindowCenter, 0);
-            double ww = dataset.GetSingleValueOrDefault<double>(DicomTag.WindowWidth, 0);
-
-            if (ww <= 0)
+            if (!TryGetDefaultWindowPreset(dataset, out double wc, out double ww))
             {
                 (wc, ww) = DicomPixelRenderer.ComputeAutoWindow(
                     _rawPixelData, _imageWidth, _imageHeight,
@@ -374,6 +376,99 @@ public partial class DicomViewPanel : UserControl
             SpatialMetadata = null;
             return false;
         }
+    }
+
+    private static bool TryGetDefaultWindowPreset(DicomDataset dataset, out double center, out double width)
+    {
+        if (TryReadWindowPreset(dataset, out center, out width))
+        {
+            return true;
+        }
+
+        if (TryReadWindowPresetFromFunctionalGroups(dataset, SharedFunctionalGroupsSequenceTag, out center, out width))
+        {
+            return true;
+        }
+
+        if (TryReadWindowPresetFromFunctionalGroups(dataset, PerFrameFunctionalGroupsSequenceTag, out center, out width))
+        {
+            return true;
+        }
+
+        center = 0;
+        width = 0;
+        return false;
+    }
+
+    private static bool TryReadWindowPresetFromFunctionalGroups(DicomDataset dataset, DicomTag groupSequenceTag, out double center, out double width)
+    {
+        center = 0;
+        width = 0;
+
+        if (!dataset.Contains(groupSequenceTag))
+        {
+            return false;
+        }
+
+        DicomSequence sequence = dataset.GetSequence(groupSequenceTag);
+        foreach (DicomDataset item in sequence.Items)
+        {
+            if (!item.Contains(FrameVoILutSequenceTag))
+            {
+                continue;
+            }
+
+            DicomSequence voiSequence = item.GetSequence(FrameVoILutSequenceTag);
+            foreach (DicomDataset voiItem in voiSequence.Items)
+            {
+                if (TryReadWindowPreset(voiItem, out center, out width))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryReadWindowPreset(DicomDataset dataset, out double center, out double width)
+    {
+        center = 0;
+        width = 0;
+
+        if (!TryReadFirstNumericValue(dataset, DicomTag.WindowCenter, out center) ||
+            !TryReadFirstNumericValue(dataset, DicomTag.WindowWidth, out width))
+        {
+            return false;
+        }
+
+        return width > 0;
+    }
+
+    private static bool TryReadFirstNumericValue(DicomDataset dataset, DicomTag tag, out double value)
+    {
+        value = 0;
+
+        if (!dataset.Contains(tag))
+        {
+            return false;
+        }
+
+        string? rawValue = dataset.GetString(tag);
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return false;
+        }
+
+        foreach (string part in rawValue.Split('\\', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (double.TryParse(part, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out value))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public void ClearImage()

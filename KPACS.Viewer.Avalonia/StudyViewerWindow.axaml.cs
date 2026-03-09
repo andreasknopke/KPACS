@@ -24,6 +24,7 @@ public partial class StudyViewerWindow : Window
     private ViewportSlot? _activeSlot;
     private Border? _dragGhost;
     private ActionToolbarMode _actionToolbarMode = ActionToolbarMode.ScrollStack;
+    private int _selectedColorScheme = (int)ColorScheme.Grayscale;
     private bool _overlayEnabled = true;
     private bool _isActionToolbarPointerOver;
 
@@ -157,6 +158,10 @@ public partial class StudyViewerWindow : Window
         {
             slot.Panel.ApplyDisplayState(previousState);
         }
+        else if (slot.Panel.CurrentColorScheme != _selectedColorScheme)
+        {
+            slot.Panel.SetColorScheme(_selectedColorScheme);
+        }
         else if (slot.Panel.IsImageLoaded)
         {
             slot.ViewState = slot.Panel.CaptureDisplayState();
@@ -221,12 +226,9 @@ public partial class StudyViewerWindow : Window
         Clear3DCursor();
     }
 
-    private void OnLutChanged(object? sender, SelectionChangedEventArgs e)
+    private void ApplyColorScheme(int scheme)
     {
-        if (LutBox.SelectedItem is not ComboBoxItem item || item.Tag is not string tag || !int.TryParse(tag, out int scheme))
-        {
-            return;
-        }
+        _selectedColorScheme = scheme;
 
         foreach (ViewportSlot slot in _slots)
         {
@@ -235,6 +237,8 @@ public partial class StudyViewerWindow : Window
                 slot.Panel.SetColorScheme(scheme);
             }
         }
+
+        UpdateStatus();
     }
 
     private void OnWheelModeChanged(object? sender, RoutedEventArgs e)
@@ -310,6 +314,7 @@ public partial class StudyViewerWindow : Window
             int representativeIndex = GetRepresentativeInstanceIndex(series);
             InstanceRecord instance = series.Instances[representativeIndex];
             bool isActiveSeries = activeSeries is not null && string.Equals(activeSeries.SeriesInstanceUid, series.SeriesInstanceUid, StringComparison.Ordinal);
+            bool isSecondaryCaptureSeries = IsSecondaryCaptureSeries(series, instance);
 
             var border = new Border
             {
@@ -344,6 +349,31 @@ public partial class StudyViewerWindow : Window
             };
 
             grid.Children.Add(thumbPanel);
+
+            if (isSecondaryCaptureSeries)
+            {
+                var keyBadge = new Border
+                {
+                    Background = new SolidColorBrush(Color.Parse("#E6F6D04D")),
+                    BorderBrush = new SolidColorBrush(Color.Parse("#FFFFF4B3")),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(9),
+                    Padding = new Thickness(4, 1),
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Margin = new Thickness(4, 4, 0, 0),
+                    Child = new TextBlock
+                    {
+                        Text = "🔑",
+                        FontSize = 12,
+                        Foreground = Brushes.Black,
+                    },
+                };
+
+                ToolTip.SetTip(keyBadge, "Secondary Capture / Schlüsselbild");
+                grid.Children.Add(keyBadge);
+            }
+
             Grid.SetRow(label, 1);
             grid.Children.Add(label);
             border.Child = grid;
@@ -784,9 +814,20 @@ public partial class StudyViewerWindow : Window
 
     private void SetActionToolbarMode(ActionToolbarMode mode)
     {
+        bool leavingToolsMode = _actionToolbarMode == ActionToolbarMode.Tools && mode != ActionToolbarMode.Tools;
         _actionToolbarMode = mode;
+
+        if (leavingToolsMode)
+        {
+            foreach (ViewportSlot slot in _slots)
+            {
+                slot.Panel.CancelMeasurementInteraction();
+            }
+        }
+
         UpdateActionModeButtons();
         ApplyActionModeToPanels();
+        RefreshMeasurementPanels();
         UpdateStatus();
     }
 
@@ -1013,6 +1054,17 @@ public partial class StudyViewerWindow : Window
         if (sender is Button button)
         {
             ApplyWindowPreset(button.Tag as string);
+        }
+
+        CloseAllActionPopups();
+        RestartActionToolbarHideTimer();
+    }
+
+    private void OnWindowLutSelected(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.Tag is string tag && int.TryParse(tag, out int scheme))
+        {
+            ApplyColorScheme(scheme);
         }
 
         CloseAllActionPopups();
