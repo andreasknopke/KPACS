@@ -15,6 +15,51 @@
                RenderTransformOrigin="0%,0%"
                RenderOptions.BitmapInterpolationMode="HighQuality" />
 
+        <Canvas x:Name="MeasurementOverlay" IsHitTestVisible="False" />
+
+        <Canvas x:Name="PixelLensOverlay" IsHitTestVisible="False">
+            <Border x:Name="PixelLensPanel"
+                    Width="144"
+                    Height="172"
+                    Background="#E0101010"
+                    BorderBrush="#FFFFDD00"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="6"
+                    IsVisible="False">
+                <StackPanel Spacing="6">
+                    <Image x:Name="PixelLensImage"
+                           Width="128"
+                           Height="128"
+                           Stretch="Fill"
+                           RenderOptions.BitmapInterpolationMode="None" />
+                    <TextBlock x:Name="PixelLensText"
+                               Foreground="#FFFFDD00"
+                               FontFamily="Consolas"
+                               FontSize="12"
+                               TextAlignment="Center" />
+                </StackPanel>
+            </Border>
+        </Canvas>
+
+        <Canvas x:Name="Cursor3DOverlay" IsHitTestVisible="False">
+            <Line x:Name="Cursor3DHorizontal"
+                Stroke="#FF35C7FF"
+                StrokeThickness="1.5"
+                IsVisible="False" />
+            <Line x:Name="Cursor3DVertical"
+                Stroke="#FF35C7FF"
+                StrokeThickness="1.5"
+                IsVisible="False" />
+            <Ellipse x:Name="Cursor3DMarker"
+                   Width="8"
+                   Height="8"
+                   Stroke="#FF35C7FF"
+                   StrokeThickness="1.5"
+                   Fill="#4020B8FF"
+                   IsVisible="False" />
+            </Canvas>
+
         <!-- Overlay text: 4 corners like a DICOM viewer -->
         <TextBlock x:Name="OverlayTopLeft"
                    Text="" Foreground="#FFFFDD00" FontFamily="Consolas" FontSize="13"
@@ -25,6 +70,16 @@
                    Text="" Foreground="#FFFFDD00" FontFamily="Consolas" FontSize="13"
                    VerticalAlignment="Top" HorizontalAlignment="Right"
                    Margin="10" IsHitTestVisible="False" TextAlignment="Right" />
+
+        <TextBlock x:Name="OverlayCenterLeft"
+               Text="" Foreground="#FFFFDD00" FontFamily="Consolas" FontSize="22" FontWeight="Bold"
+               VerticalAlignment="Center" HorizontalAlignment="Left"
+               Margin="10,0,0,0" IsHitTestVisible="False" />
+
+        <TextBlock x:Name="OverlayCenterRight"
+               Text="" Foreground="#FFFFDD00" FontFamily="Consolas" FontSize="22" FontWeight="Bold"
+               VerticalAlignment="Center" HorizontalAlignment="Right"
+               Margin="0,0,10,0" IsHitTestVisible="False" TextAlignment="Right" />
 
         <TextBlock x:Name="OverlayBottomLeft"
                    Text="" Foreground="#FFFFDD00" FontFamily="Consolas" FontSize="13"

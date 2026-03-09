@@ -23,7 +23,9 @@ using Avalonia.Threading;
 using FellowOakDicom;
 using FellowOakDicom.Imaging;
 using FellowOakDicom.Imaging.Codec;
+using KPACS.Viewer.Models;
 using KPACS.Viewer.Rendering;
+using SpatialVector3D = KPACS.Viewer.Models.Vector3D;
 
 namespace KPACS.Viewer.Controls;
 
@@ -115,6 +117,7 @@ public partial class DicomViewPanel : UserControl
     // Center zone = inner area → drag to pan
     private bool _isEdgeZoom;        // locked at mouse-down: true = zoom mode, false = pan mode
     private int _lastMouseY;         // for incremental edge-zoom tracking
+    private Point? _cursor3DImagePoint;
 
     // Pointer capture tracking
     private IPointer? _capturedPointer;
@@ -145,6 +148,8 @@ public partial class DicomViewPanel : UserControl
     public string PatientName => _patientName;
     public bool IsImageLoaded => _rawPixelData != null;
     public int CurrentColorScheme => _colorScheme;
+    public string FilePath => _fileName;
+    public DicomSpatialMetadata? SpatialMetadata { get; private set; }
 
     private bool _showOverlay = true;
     public bool ShowOverlay
@@ -166,6 +171,7 @@ public partial class DicomViewPanel : UserControl
     public event Action? ImageLoaded;
     public event Action<int>? StackScrollRequested;
     public event Action? ViewStateChanged;
+    public event Action<DicomHoverInfo?>? HoveredImagePointChanged;
 
     public MouseWheelMode WheelMode { get; set; } = MouseWheelMode.Zoom;
     public int StackItemCount { get; set; } = 1;
@@ -191,6 +197,7 @@ public partial class DicomViewPanel : UserControl
         RootGrid.PointerReleased += OnPointerReleased;
         RootGrid.PointerMoved += OnPointerMoved;
         RootGrid.PointerWheelChanged += OnPointerWheelChanged;
+        RootGrid.PointerExited += OnPointerExited;
 
         SizeChanged += OnSizeChanged;
     }
@@ -211,6 +218,7 @@ public partial class DicomViewPanel : UserControl
             var file = DicomFile.Open(filePath, FellowOakDicom.FileReadOption.ReadAll);
             var dataset = file.Dataset;
             _fileName = filePath;
+            SpatialMetadata = DicomSpatialMetadata.FromDataset(dataset, filePath);
 
             // --- Extract image metadata ---
             _imageWidth = dataset.GetSingleValue<int>(DicomTag.Columns);
@@ -308,6 +316,8 @@ public partial class DicomViewPanel : UserControl
             // Fit to window and center
             _fitToWindow = true;
             ApplyInitialFitToWindow();
+            Set3DCursorOverlay(null);
+            ResetMeasurementStateForNewImage();
 
             UpdateOverlay();
             ImageLoaded?.Invoke();
@@ -319,6 +329,7 @@ public partial class DicomViewPanel : UserControl
         catch (Exception ex)
         {
             LastError = $"Error loading DICOM file: {ex.Message}";
+            SpatialMetadata = null;
             return false;
         }
     }
@@ -413,6 +424,8 @@ public partial class DicomViewPanel : UserControl
         _fitToWindow = true;
         ApplyZoomTransform();
         CenterImage();
+        Update3DCursorOverlay();
+        UpdateMeasurementPresentation();
         ZoomChanged?.Invoke();
         NotifyViewStateChanged();
     }
@@ -445,6 +458,8 @@ public partial class DicomViewPanel : UserControl
         _zoomFactor = 1.0;
         ApplyZoomTransform();
         CenterImage();
+        Update3DCursorOverlay();
+        UpdateMeasurementPresentation();
         ZoomChanged?.Invoke();
         NotifyViewStateChanged();
     }
@@ -457,6 +472,8 @@ public partial class DicomViewPanel : UserControl
         _fitToWindow = false;
         _zoomFactor = Math.Min(20.0, _zoomFactor * 1.1);
         ApplyZoomTransform();
+        Update3DCursorOverlay();
+        UpdateMeasurementPresentation();
         ZoomChanged?.Invoke();
         NotifyViewStateChanged();
     }
@@ -469,6 +486,8 @@ public partial class DicomViewPanel : UserControl
         _fitToWindow = false;
         _zoomFactor = Math.Max(0.01, _zoomFactor / 1.1);
         ApplyZoomTransform();
+        Update3DCursorOverlay();
+        UpdateMeasurementPresentation();
         ZoomChanged?.Invoke();
         NotifyViewStateChanged();
     }
@@ -481,6 +500,8 @@ public partial class DicomViewPanel : UserControl
         _fitToWindow = false;
         _zoomFactor = Math.Clamp(factor, 0.01, 20.0);
         ApplyZoomTransform();
+        Update3DCursorOverlay();
+        UpdateMeasurementPresentation();
         ZoomChanged?.Invoke();
         NotifyViewStateChanged();
     }
@@ -521,6 +542,8 @@ public partial class DicomViewPanel : UserControl
             _panY = state.PanY;
             _panTransform.X = _panX;
             _panTransform.Y = _panY;
+            Update3DCursorOverlay();
+            UpdateMeasurementPresentation();
             ZoomChanged?.Invoke();
             NotifyViewStateChanged();
         }
@@ -552,6 +575,8 @@ public partial class DicomViewPanel : UserControl
         _panY = (canvasHeight - displayHeight) / 2.0;
         _panTransform.X = _panX;
         _panTransform.Y = _panY;
+        Update3DCursorOverlay();
+        UpdateMeasurementPresentation();
     }
 
     /// <summary>
@@ -567,6 +592,12 @@ public partial class DicomViewPanel : UserControl
         NotifyViewStateChanged();
     }
 
+    public void Set3DCursorOverlay(Point? imagePoint)
+    {
+        _cursor3DImagePoint = imagePoint;
+        Update3DCursorOverlay();
+    }
+
     private void NotifyViewStateChanged() => ViewStateChanged?.Invoke();
 
     // ==============================================================================================
@@ -579,6 +610,8 @@ public partial class DicomViewPanel : UserControl
         {
             OverlayTopLeft.Text = "";
             OverlayTopRight.Text = "";
+            OverlayCenterLeft.Text = "";
+            OverlayCenterRight.Text = "";
             OverlayBottomLeft.Text = "";
             OverlayBottomRight.Text = "";
             ApplyOverlayVisibility();
@@ -592,6 +625,9 @@ public partial class DicomViewPanel : UserControl
         OverlayTopRight.Text = string.Join("\n",
             new[] { _institution, FormatStudyDate(_studyDate), _studyDescription }
                 .Where(s => !string.IsNullOrEmpty(s)));
+
+        OverlayCenterRight.Text = GetHorizontalOrientationLabel(isRightEdge: true);
+        OverlayCenterLeft.Text = GetHorizontalOrientationLabel(isRightEdge: false);
 
         OverlayBottomLeft.Text = $"W: {_windowWidth:F0}  C: {_windowCenter:F0}";
 
@@ -608,8 +644,90 @@ public partial class DicomViewPanel : UserControl
         bool visible = _showOverlay;
         OverlayTopLeft.IsVisible = visible;
         OverlayTopRight.IsVisible = visible;
+        OverlayCenterLeft.IsVisible = visible && !string.IsNullOrEmpty(OverlayCenterLeft.Text);
+        OverlayCenterRight.IsVisible = visible && !string.IsNullOrEmpty(OverlayCenterRight.Text);
         OverlayBottomLeft.IsVisible = visible;
         OverlayBottomRight.IsVisible = visible;
+    }
+
+    private string GetHorizontalOrientationLabel(bool isRightEdge)
+    {
+        if (SpatialMetadata is null)
+        {
+            return string.Empty;
+        }
+
+        SpatialVector3D direction = isRightEdge
+            ? SpatialMetadata.RowDirection
+            : SpatialMetadata.RowDirection * -1;
+
+        return FormatPatientOrientation(direction);
+    }
+
+    private static string FormatPatientOrientation(SpatialVector3D direction)
+    {
+        const double minimumComponent = 0.2;
+
+        var components = new (double Value, string Positive, string Negative)[]
+        {
+            (direction.X, "L", "R"),
+            (direction.Y, "P", "A"),
+            (direction.Z, "H", "F"),
+        };
+
+        var ordered = components
+            .OrderByDescending(component => Math.Abs(component.Value))
+            .ToArray();
+
+        string label = string.Concat(
+            ordered
+                .Where(component => Math.Abs(component.Value) >= minimumComponent)
+                .Select(component => component.Value >= 0 ? component.Positive : component.Negative));
+
+        return label.Length > 0 ? label : string.Empty;
+    }
+
+    public bool TryGetImagePoint(Point controlPoint, out Point imagePoint)
+    {
+        imagePoint = default;
+
+        if (_rawPixelData == null || _zoomFactor <= 0)
+        {
+            return false;
+        }
+
+        double x = (controlPoint.X - _panX) / _zoomFactor;
+        double y = (controlPoint.Y - _panY) / _zoomFactor;
+        imagePoint = new Point(x, y);
+        return x >= 0 && y >= 0 && x < _imageWidth && y < _imageHeight;
+    }
+
+    private void Update3DCursorOverlay()
+    {
+        if (_cursor3DImagePoint is null || _rawPixelData == null || _zoomFactor <= 0)
+        {
+            Cursor3DHorizontal.IsVisible = false;
+            Cursor3DVertical.IsVisible = false;
+            Cursor3DMarker.IsVisible = false;
+            return;
+        }
+
+        double displayX = _panX + (_cursor3DImagePoint.Value.X * _zoomFactor);
+        double displayY = _panY + (_cursor3DImagePoint.Value.Y * _zoomFactor);
+
+        Cursor3DHorizontal.StartPoint = new Point(0, displayY);
+        Cursor3DHorizontal.EndPoint = new Point(RootGrid.Bounds.Width, displayY);
+        Cursor3DVertical.StartPoint = new Point(displayX, 0);
+        Cursor3DVertical.EndPoint = new Point(displayX, RootGrid.Bounds.Height);
+
+        Canvas.SetLeft(Cursor3DMarker, displayX - (Cursor3DMarker.Width / 2));
+        Canvas.SetTop(Cursor3DMarker, displayY - (Cursor3DMarker.Height / 2));
+
+        bool isVisible = displayX >= -12 && displayX <= RootGrid.Bounds.Width + 12 &&
+            displayY >= -12 && displayY <= RootGrid.Bounds.Height + 12;
+        Cursor3DHorizontal.IsVisible = isVisible;
+        Cursor3DVertical.IsVisible = isVisible;
+        Cursor3DMarker.IsVisible = isVisible;
     }
 
     private static string FormatStudyDate(string dcmDate)
@@ -641,6 +759,11 @@ public partial class DicomViewPanel : UserControl
     {
         var point = e.GetCurrentPoint(RootGrid);
         var pos = e.GetPosition(RootGrid);
+
+        if (HandleMeasurementPointerPressed(point, pos, e))
+        {
+            return;
+        }
 
         // Double-click left: fit to window
         if (point.Properties.IsLeftButtonPressed && e.ClickCount == 2)
@@ -703,6 +826,11 @@ public partial class DicomViewPanel : UserControl
 
     private void OnPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
+        if (HandleMeasurementPointerReleased(e))
+        {
+            return;
+        }
+
         if (e.InitialPressMouseButton == MouseButton.Right && _isRightDragging)
         {
             _isRightDragging = false;
@@ -730,6 +858,14 @@ public partial class DicomViewPanel : UserControl
     private void OnPointerMoved(object? sender, PointerEventArgs e)
     {
         Point pos = e.GetPosition(RootGrid);
+
+        if (HandleMeasurementPointerMoved(pos, e))
+        {
+            HoveredImagePointChanged?.Invoke(TryGetImagePoint(pos, out Point imagePoint)
+                ? new DicomHoverInfo(imagePoint, e.KeyModifiers)
+                : null);
+            return;
+        }
 
         if (_isRightDragging)
         {
@@ -797,6 +933,8 @@ public partial class DicomViewPanel : UserControl
                 _zoomFactor = newZoom;
                 _fitToWindow = false;
                 ApplyZoomTransform();
+                Update3DCursorOverlay();
+                UpdateMeasurementPresentation();
                 UpdateOverlay();
                 ZoomChanged?.Invoke();
                 NotifyViewStateChanged();
@@ -815,11 +953,26 @@ public partial class DicomViewPanel : UserControl
             _panTransform.X = _panX;
             _panTransform.Y = _panY;
             _fitToWindow = false;
+            Update3DCursorOverlay();
+            UpdateMeasurementPresentation();
             NotifyViewStateChanged();
         }
         else if (!_isRightDragging && !_isLeftDragging && _rawPixelData != null)
         {
             UpdateZoneCursor(pos);
+            HoveredImagePointChanged?.Invoke(TryGetImagePoint(pos, out Point imagePoint)
+                ? new DicomHoverInfo(imagePoint, e.KeyModifiers)
+                : null);
+        }
+    }
+
+    private void OnPointerExited(object? sender, PointerEventArgs e)
+    {
+        HandleMeasurementPointerExited();
+
+        if (!_isRightDragging && !_isLeftDragging)
+        {
+            HoveredImagePointChanged?.Invoke(null);
         }
     }
 
@@ -869,6 +1022,8 @@ public partial class DicomViewPanel : UserControl
         _zoomFactor = newZoom;
         _fitToWindow = false;
         ApplyZoomTransform();
+        Update3DCursorOverlay();
+        UpdateMeasurementPresentation();
 
         UpdateOverlay();
         ZoomChanged?.Invoke();
@@ -896,6 +1051,8 @@ public partial class DicomViewPanel : UserControl
         if (_fitToWindow && _rawPixelData != null)
             ApplyFitToWindow();
 
+        Update3DCursorOverlay();
+        UpdateMeasurementPresentation();
         UpdateOverlay();
     }
 }

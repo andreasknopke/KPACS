@@ -73,7 +73,9 @@ The Avalonia application has moved beyond a single-file viewer and now includes 
 - **Filesystem mode** with Windows-style `Computer` root, drive browsing, folder scan, and optional DICOMDIR usage
 - **Preview-before-import workflow**: filesystem scans build preview studies first, and actual import happens only on explicit `Import` or `View`
 - **Study actions**: view, import, pseudonymize, and delete study (including disk files)
-- **Multi-viewport study viewer** with thumbnail strip, layout selection, LUT switching, and stack-tool drag behavior ported from the Delphi version
+- **Multi-viewport study viewer** with thumbnail strip, layout selection, LUT switching, stack-tool drag behavior, direct active-viewport selection, and drag-reassignable series layouting
+- **Interactive orientation/navigation overlays** including patient left/right markers and a Shift-held transient 3D cursor for cross-view localization
+- **Editable measurement tools** including pixel lens, line, angle, rectangular ROI, and polygon ROI, anchored to the referenced slice geometry in patient space
 - **Search/filter support** in both Database and Filesystem mode, including multi-select modality filtering
 - Shares the same platform-independent rendering engine and color LUTs across the current C# viewer stack
 - Uses Avalonia pointer events, StorageProvider dialogs, and Semi.Avalonia styling
@@ -163,7 +165,12 @@ This contains:
 
 - Window/level, zoom, pan, fit-to-window, and color LUT switching
 - Stack tool with accelerated drag scrolling for series browsing
-- Thumbnail strip for jumping between series
+- Click-to-activate viewports inside the study viewer
+- Thumbnail strip for jumping between series and drag-dropping series into arbitrary viewports
+- Patient orientation markers on the viewer overlay for left/right validation
+- Shift-held 3D cursor that projects the hovered location into compatible views without locking the viewer in localization mode
+- Measurement mode selector with editable line, angle, rectangular ROI, polygon ROI, and pixel lens tools
+- Measurement objects persist against the correct image geometry and are reprojected only onto compatible slices/views from the same acquisition space
 - Series overview panel in the browser
 - Pseudonymization of imported studies
 - Delete-study workflow that removes both database rows and stored files

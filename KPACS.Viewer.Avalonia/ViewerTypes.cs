@@ -39,3 +39,16 @@ public enum MouseWheelMode
     Zoom,
     StackScroll,
 }
+
+/// <summary>
+/// Measurement interaction mode for the study viewer.
+/// </summary>
+public enum MeasurementTool
+{
+    None,
+    PixelLens,
+    Line,
+    Angle,
+    RectangleRoi,
+    PolygonRoi,
+}
