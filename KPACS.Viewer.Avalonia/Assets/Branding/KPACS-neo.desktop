@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=KPACS-neo
+Comment=Cross-platform DICOM viewer
+Exec=KPACS.Viewer
+Icon=k-pacs
+Terminal=false
+Categories=Graphics;Science;MedicalSoftware;
+StartupNotify=true

@@ -142,6 +142,45 @@ dotnet build KPACS.DCMClasses/KPACS.DCMClasses.csproj
 dotnet build KPACS.Viewer.Avalonia/KPACS.Viewer.Avalonia.csproj
 ```
 
+## Release Packaging
+
+The repository includes a GitHub Actions workflow at [.github/workflows/release-packages.yml](../.github/workflows/release-packages.yml) that builds three native self-contained release artifacts for the Avalonia viewer:
+
+- `win-x64` — single-file `.exe` packed as `.zip`
+- `linux-x64` — single-file executable packed as `.tar.gz`
+- `osx-arm64` — zipped `KPACS-neo.app` bundle for Apple Silicon Macs
+
+These release builds use:
+
+- self-contained .NET 10 runtime
+- single-file publish
+- embedded native libraries via self-extraction
+- release symbols disabled for smaller artifacts
+
+### Local publish commands
+
+These are the exact publish settings used for release packaging:
+
+```bash
+dotnet publish KPACS.Viewer.Avalonia/KPACS.Viewer.Avalonia.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false
+
+dotnet publish KPACS.Viewer.Avalonia/KPACS.Viewer.Avalonia.csproj -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false
+
+dotnet publish KPACS.Viewer.Avalonia/KPACS.Viewer.Avalonia.csproj -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false
+```
+
+### GitHub Release flow
+
+- Create a tag such as `v0.1.0`
+- Publish a GitHub Release for that tag
+- The workflow builds all three platform packages on native runners and attaches them to the release automatically
+
+You can also run the workflow manually with `workflow_dispatch` to generate test artifacts without publishing a release.
+
+### macOS note
+
+The macOS package is emitted as an unsigned `.app` bundle. That is the most practical first-release shape for “download, unpack, start”, but Gatekeeper may still require the user to right-click the app and choose `Open` once unless the app is later code signed and notarized.
+
 ## Running
 
 ```bash

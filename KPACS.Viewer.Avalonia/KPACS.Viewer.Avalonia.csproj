@@ -8,6 +8,7 @@
     <RootNamespace>KPACS.Viewer</RootNamespace>
     <AssemblyName>KPACS.Viewer</AssemblyName>
     <Description>K-PACS DICOM Viewer - Cross-platform viewer with Avalonia UI</Description>
+    <ApplicationIcon Condition="'$(OS)' == 'Windows_NT'">Assets\Branding\k-pacs.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
