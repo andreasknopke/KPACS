@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -21,13 +22,24 @@ public partial class StudyViewerWindow : Window
     private readonly RemoteStudyRetrievalSession? _remoteRetrievalSession;
     private readonly List<ViewportSlot> _slots = [];
     private readonly Dictionary<string, DicomSpatialMetadata?> _spatialMetadataCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ObservableCollection<ToastNotificationItem> _toastNotifications = [];
+    private readonly CancellationTokenSource _priorLookupCancellation = new();
     private readonly DispatcherTimer _actionToolbarHideTimer = new();
+    private readonly string? _viewerSettingsPath;
+    private IReadOnlyList<PriorStudySummary> _priorStudies = [];
+    private PriorStudySummary? _selectedPriorStudy;
+    private StudyDetails? _thumbnailStripStudy;
+    private CancellationTokenSource? _priorPreviewCancellation;
     private ViewportSlot? _activeSlot;
     private Border? _dragGhost;
     private ActionToolbarMode _actionToolbarMode = ActionToolbarMode.ScrollStack;
     private int _selectedColorScheme = (int)ColorScheme.Grayscale;
     private bool _overlayEnabled = true;
+    private bool _linkedViewSyncEnabled = true;
     private bool _isActionToolbarPointerOver;
+    private bool _isPriorPreviewLoading;
+    private bool _isSynchronizingLinkedViews;
+    private string _thumbnailStripMessage = string.Empty;
 
     public StudyViewerWindow(ViewerStudyContext context)
     {
@@ -37,17 +49,21 @@ public partial class StudyViewerWindow : Window
         _remoteRetrievalSession = context.RemoteRetrievalSession;
         if (Application.Current is App app)
         {
+            _viewerSettingsPath = Path.Combine(app.Paths.ApplicationDirectory, "study-viewer-settings.json");
             app.WindowPlacementService.Register(this, "StudyViewerWindow");
         }
+        LoadViewerSettings();
         if (_remoteRetrievalSession is not null)
         {
             _remoteRetrievalSession.StudyChanged += OnRemoteStudyChanged;
         }
         InitializeActionToolbar();
+        ToastItemsControl.ItemsSource = _toastNotifications;
         StudyTitleText.Text = context.StudyDetails.Study.PatientName;
         StudySubtitleText.Text = $"{context.StudyDetails.Study.StudyDescription}   {context.StudyDetails.Study.StudyDate}   {context.StudyDetails.Study.Modalities}";
         KeyUp += OnWindowKeyUp;
         Deactivated += (_, _) => Clear3DCursor();
+        Opened += OnViewerOpened;
         ApplyLayout(context.LayoutRows, context.LayoutColumns);
         InitializeSecondaryCaptureUi();
         Closed += OnViewerClosed;
@@ -55,7 +71,8 @@ public partial class StudyViewerWindow : Window
 
     private void InitializeActionToolbar()
     {
-        _overlayEnabled = OverlayToggleButton.IsChecked != false;
+        OverlayToggleButton.IsChecked = _overlayEnabled;
+        LinkedSyncToggleButton.IsChecked = _linkedViewSyncEnabled;
         _actionToolbarHideTimer.Interval = TimeSpan.FromSeconds(2.2);
         _actionToolbarHideTimer.Tick += OnActionToolbarHideTimerTick;
         SetActionToolbarMode(ActionToolbarMode.ScrollStack);
@@ -118,13 +135,7 @@ public partial class StudyViewerWindow : Window
             panel.StackScrollRequested += delta => OnStackScroll(border, delta);
             panel.PointerPressed += (_, e) => OnViewportPressed(border, e);
             panel.HoveredImagePointChanged += hover => OnPanelHovered(slot, hover);
-            panel.ViewStateChanged += () =>
-            {
-                if (panel.IsImageLoaded)
-                {
-                    slot.ViewState = panel.CaptureDisplayState();
-                }
-            };
+            panel.ViewStateChanged += () => OnPanelViewStateChanged(slot, panel);
             border.Child = panel;
             border.PointerPressed += OnViewportPressed;
             _slots.Add(slot);
@@ -142,6 +153,7 @@ public partial class StudyViewerWindow : Window
             }
 
             SetActiveSlot(_slots.FirstOrDefault());
+            SynchronizeLinkedViews(_activeSlot);
             UpdateStatus();
         }, DispatcherPriority.Loaded);
 
@@ -220,6 +232,22 @@ public partial class StudyViewerWindow : Window
         RefreshThumbnailStrip(slot?.Series);
         RequestSlotPriority(slot);
         UpdateStatus();
+    }
+
+    private void OnPanelViewStateChanged(ViewportSlot slot, DicomViewPanel panel)
+    {
+        if (!panel.IsImageLoaded)
+        {
+            return;
+        }
+
+        slot.ViewState = panel.CaptureDisplayState();
+        if (_isSynchronizingLinkedViews)
+        {
+            return;
+        }
+
+        SynchronizeLinkedViews(slot);
     }
 
     private void UpdateSlotVisualStates()
@@ -325,11 +353,81 @@ public partial class StudyViewerWindow : Window
         ViewerStatusText.Text = BuildStatusText(_activeSlot);
     }
 
+    private async void OnViewerOpened(object? sender, EventArgs e)
+    {
+        Opened -= OnViewerOpened;
+        try
+        {
+            await LoadPriorStudiesAsync();
+        }
+        finally
+        {
+            _remoteRetrievalSession?.StartBackgroundRetrieval();
+        }
+    }
+
+    private async Task LoadPriorStudiesAsync()
+    {
+        if (_context.LoadPriorStudiesAsync is null)
+        {
+            UpdatePriorStudies(Array.Empty<PriorStudySummary>());
+            return;
+        }
+
+        try
+        {
+            IReadOnlyList<PriorStudySummary> priors = await _context.LoadPriorStudiesAsync(_priorLookupCancellation.Token);
+            if (_priorLookupCancellation.IsCancellationRequested)
+            {
+                return;
+            }
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                UpdatePriorStudies(priors);
+                if (priors.Count > 0)
+                {
+                    ShowToast(priors.Count == 1
+                        ? "1 prior study is available for comparison."
+                        : $"{priors.Count} prior studies are available for comparison.", ToastSeverity.Info);
+                }
+            });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch
+        {
+            await Dispatcher.UIThread.InvokeAsync(() => UpdatePriorStudies(Array.Empty<PriorStudySummary>()));
+        }
+    }
+
+    private void UpdatePriorStudies(IReadOnlyList<PriorStudySummary> priors)
+    {
+        _priorStudies = priors.ToList();
+        if (_selectedPriorStudy is not null
+            && !_priorStudies.Any(prior => string.Equals(prior.StudyInstanceUid, _selectedPriorStudy.StudyInstanceUid, StringComparison.Ordinal)))
+        {
+            ShowCurrentStudyThumbnails();
+        }
+
+        RenderPriorStudyChips();
+    }
+
     private void RefreshThumbnailStrip(SeriesRecord? activeSeries)
     {
         ThumbnailStripPanel.Children.Clear();
 
-        List<SeriesRecord> seriesList = _context.StudyDetails.Series
+        StudyDetails? thumbnailStudy = _selectedPriorStudy is null ? _context.StudyDetails : _thumbnailStripStudy;
+        bool showingCurrentStudy = _selectedPriorStudy is null;
+
+        if (thumbnailStudy is null)
+        {
+            ShowThumbnailStripMessage(_thumbnailStripMessage);
+            return;
+        }
+
+        List<SeriesRecord> seriesList = thumbnailStudy.Series
             .Where(series => GetSeriesTotalCount(series) > 0)
             .OrderBy(series => series.SeriesNumber)
             .ThenBy(series => series.SeriesDescription)
@@ -337,6 +435,7 @@ public partial class StudyViewerWindow : Window
 
         if (seriesList.Count == 0)
         {
+            ShowThumbnailStripMessage(_thumbnailStripMessage);
             return;
         }
 
@@ -378,7 +477,7 @@ public partial class StudyViewerWindow : Window
             }
             else
             {
-                RequestSeriesPriority(series, representativeIndex);
+                RequestSeriesThumbnail(series, representativeIndex);
             }
 
             var label = new TextBlock
@@ -437,6 +536,184 @@ public partial class StudyViewerWindow : Window
                 Margin = new Thickness(8, 0, 0, 0),
             });
         }
+    }
+
+    private void RenderPriorStudyChips()
+    {
+        PriorStudiesPanel.Children.Clear();
+        PriorStudiesScrollViewer.IsVisible = _priorStudies.Count > 0;
+        if (_priorStudies.Count == 0)
+        {
+            return;
+        }
+
+        PriorStudiesPanel.Children.Add(CreateChipButton(
+            label: _selectedPriorStudy is null ? "Current study" : "Back to current",
+            toolTip: "Show the current study thumbnails.",
+            isSelected: _selectedPriorStudy is null,
+            isRemote: false,
+            isLoading: false,
+            onClick: (_, _) => ShowCurrentStudyThumbnails()));
+
+        foreach (PriorStudySummary prior in _priorStudies)
+        {
+            bool isSelected = _selectedPriorStudy is not null
+                && string.Equals(_selectedPriorStudy.StudyInstanceUid, prior.StudyInstanceUid, StringComparison.Ordinal);
+            string label = prior.IsRemote ? $"☁ {prior.DisplayLabel}" : prior.DisplayLabel;
+            if (isSelected && _isPriorPreviewLoading)
+            {
+                label += " • loading";
+            }
+
+            PriorStudiesPanel.Children.Add(CreateChipButton(
+                label,
+                prior.ToolTipText,
+                isSelected,
+                prior.IsRemote,
+                isSelected && _isPriorPreviewLoading,
+                async (_, _) => await ShowPriorStudyThumbnailsAsync(prior)));
+        }
+    }
+
+    private Button CreateChipButton(string label, string toolTip, bool isSelected, bool isRemote, bool isLoading, EventHandler<RoutedEventArgs> onClick)
+    {
+        Color background = isSelected
+            ? Color.Parse(isRemote ? "#FF224C69" : "#FF5B4A20")
+            : Color.Parse(isRemote ? "#FF202D36" : "#FF2B2B2B");
+        Color border = isSelected
+            ? Color.Parse(isRemote ? "#FF76C8FF" : "#FFFFD66C")
+            : Color.Parse(isRemote ? "#FF3A647B" : "#FF565656");
+        Color foreground = isLoading ? Color.Parse("#FFFFF1C1") : Colors.White;
+
+        var button = new Button
+        {
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            Content = new Border
+            {
+                Background = new SolidColorBrush(background),
+                BorderBrush = new SolidColorBrush(border),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(14),
+                Padding = new Thickness(12, 5),
+                Child = new TextBlock
+                {
+                    Text = label,
+                    Foreground = new SolidColorBrush(foreground),
+                    FontSize = 12,
+                },
+            },
+        };
+
+        ToolTip.SetTip(button, toolTip);
+        button.Click += onClick;
+        return button;
+    }
+
+    private void ShowCurrentStudyThumbnails()
+    {
+        CancelPriorPreviewLoad();
+        _selectedPriorStudy = null;
+        _thumbnailStripStudy = null;
+        _thumbnailStripMessage = string.Empty;
+        _isPriorPreviewLoading = false;
+        _remoteRetrievalSession?.StartBackgroundRetrieval();
+        RenderPriorStudyChips();
+        RefreshThumbnailStrip(_activeSlot?.Series);
+        RequestSlotPriority(_activeSlot);
+    }
+
+    private async Task ShowPriorStudyThumbnailsAsync(PriorStudySummary priorStudy)
+    {
+        if (_context.LoadPriorStudyPreviewAsync is null)
+        {
+            return;
+        }
+
+        CancelPriorPreviewLoad();
+        _remoteRetrievalSession?.StartBackgroundRetrieval();
+        _selectedPriorStudy = priorStudy;
+        _thumbnailStripStudy = null;
+        _isPriorPreviewLoading = true;
+        _thumbnailStripMessage = priorStudy.IsRemote
+            ? "Loading remote prior previews…"
+            : "Loading prior previews…";
+        RenderPriorStudyChips();
+        RefreshThumbnailStrip(null);
+
+        _priorPreviewCancellation = CancellationTokenSource.CreateLinkedTokenSource(_priorLookupCancellation.Token);
+        try
+        {
+            await _context.LoadPriorStudyPreviewAsync(priorStudy, details =>
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (_selectedPriorStudy is null || !string.Equals(_selectedPriorStudy.StudyInstanceUid, priorStudy.StudyInstanceUid, StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+
+                    _thumbnailStripStudy = details;
+                    _thumbnailStripMessage = string.Empty;
+                    RefreshThumbnailStrip(null);
+                });
+            }, _priorPreviewCancellation.Token);
+
+            if (_selectedPriorStudy is not null && string.Equals(_selectedPriorStudy.StudyInstanceUid, priorStudy.StudyInstanceUid, StringComparison.Ordinal))
+            {
+                _isPriorPreviewLoading = false;
+                if (_thumbnailStripStudy is null || _thumbnailStripStudy.Series.Count == 0)
+                {
+                    _thumbnailStripMessage = priorStudy.IsRemote
+                        ? "No remote prior preview images arrived."
+                        : "No prior preview images are available.";
+                    RefreshThumbnailStrip(null);
+                }
+
+                RenderPriorStudyChips();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            if (_selectedPriorStudy is not null && string.Equals(_selectedPriorStudy.StudyInstanceUid, priorStudy.StudyInstanceUid, StringComparison.Ordinal))
+            {
+                _isPriorPreviewLoading = false;
+                _thumbnailStripMessage = $"Prior preview failed: {ex.Message}";
+                RefreshThumbnailStrip(null);
+                RenderPriorStudyChips();
+                ShowToast(_thumbnailStripMessage, ToastSeverity.Warning, TimeSpan.FromSeconds(6));
+            }
+        }
+    }
+
+    private void CancelPriorPreviewLoad()
+    {
+        if (_priorPreviewCancellation is not null)
+        {
+            _priorPreviewCancellation.Cancel();
+            _priorPreviewCancellation.Dispose();
+            _priorPreviewCancellation = null;
+        }
+    }
+
+    private void ShowThumbnailStripMessage(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        ThumbnailStripPanel.Children.Add(new TextBlock
+        {
+            Text = message,
+            Foreground = new SolidColorBrush(Color.Parse("#FFBDBDBD")),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 4, 0, 4),
+        });
     }
 
     private void JumpToSeries(SeriesRecord series)
@@ -553,7 +830,59 @@ public partial class StudyViewerWindow : Window
         slot.ViewState = null;
         RequestSeriesPriority(series, slot.InstanceIndex);
         LoadSlot(slot);
+        SynchronizeLinkedViews(_activeSlot ?? slot);
         UpdateStatus();
+    }
+
+    private void SynchronizeLinkedViews(ViewportSlot? sourceSlot)
+    {
+        if (!_linkedViewSyncEnabled || _isSynchronizingLinkedViews || sourceSlot?.Series is null || sourceSlot.CurrentSpatialMetadata is null)
+        {
+            return;
+        }
+
+        if (!sourceSlot.Panel.TryCaptureNavigationState(out DicomViewPanel.NavigationState navigationState))
+        {
+            return;
+        }
+
+        DicomSpatialMetadata sourceMetadata = sourceSlot.CurrentSpatialMetadata;
+        SpatialVector3D patientPoint = sourceMetadata.PatientPointFromPixel(navigationState.CenterImagePoint);
+
+        try
+        {
+            _isSynchronizingLinkedViews = true;
+
+            foreach (ViewportSlot targetSlot in _slots)
+            {
+                if (ReferenceEquals(targetSlot, sourceSlot) || targetSlot.Series is null || targetSlot.Series.Instances.Count == 0)
+                {
+                    continue;
+                }
+
+                SliceProjection? projection = FindBestProjection(targetSlot, sourceMetadata, patientPoint);
+                if (projection is null)
+                {
+                    continue;
+                }
+
+                if (targetSlot.InstanceIndex != projection.InstanceIndex)
+                {
+                    targetSlot.InstanceIndex = projection.InstanceIndex;
+                    LoadSlot(targetSlot);
+                }
+
+                targetSlot.Panel.ApplyNavigationState(navigationState with { CenterImagePoint = projection.ImagePoint });
+                if (targetSlot.Panel.IsImageLoaded)
+                {
+                    targetSlot.ViewState = targetSlot.Panel.CaptureDisplayState();
+                }
+            }
+        }
+        finally
+        {
+            _isSynchronizingLinkedViews = false;
+        }
     }
 
     private ViewportSlot? GetSlotFromSender(object? sender)
@@ -880,8 +1209,24 @@ public partial class StudyViewerWindow : Window
             return;
         }
 
+        if (!_remoteRetrievalSession.IsBackgroundRetrievalEnabled)
+        {
+            _ = _remoteRetrievalSession.RequestFocusedImageAsync(slot.Series.SeriesInstanceUid, slot.InstanceIndex, direction);
+            return;
+        }
+
         _ = _remoteRetrievalSession.PrioritizeSeriesAsync(slot.Series.SeriesInstanceUid, slot.InstanceIndex, 6, direction);
         _ = _remoteRetrievalSession.PrioritizeAdjacentSeriesAsync(slot.Series.SeriesInstanceUid, 1);
+    }
+
+    private void RequestSeriesThumbnail(SeriesRecord series, int focusIndex)
+    {
+        if (_remoteRetrievalSession is null)
+        {
+            return;
+        }
+
+        _ = _remoteRetrievalSession.RequestFocusedImageAsync(series.SeriesInstanceUid, focusIndex);
     }
 
     private void RequestSeriesPriority(SeriesRecord series, int focusIndex, int direction = 0)
@@ -930,18 +1275,113 @@ public partial class StudyViewerWindow : Window
             }
         }
 
-        RefreshThumbnailStrip(_activeSlot?.Series);
+        RefreshThumbnailStrip(_selectedPriorStudy is null ? _activeSlot?.Series : null);
         UpdateStatus();
     }
 
     private void OnViewerClosed(object? sender, EventArgs e)
     {
+        CancelPriorPreviewLoad();
+        _priorLookupCancellation.Cancel();
+        _priorLookupCancellation.Dispose();
+        Opened -= OnViewerOpened;
+
         if (_remoteRetrievalSession is not null)
         {
             _remoteRetrievalSession.StudyChanged -= OnRemoteStudyChanged;
         }
 
         Closed -= OnViewerClosed;
+    }
+
+    private void ShowToast(string message, ToastSeverity severity, TimeSpan? duration = null)
+    {
+        if (string.IsNullOrWhiteSpace(message) || ToastItemsControl is null)
+        {
+            return;
+        }
+
+        if (_toastNotifications.Any(toast => string.Equals(toast.Message, message, StringComparison.Ordinal)))
+        {
+            return;
+        }
+
+        ToastNotificationItem toast = CreateToast(message, severity);
+        _toastNotifications.Add(toast);
+        while (_toastNotifications.Count > 4)
+        {
+            _toastNotifications.RemoveAt(0);
+        }
+
+        _ = DismissToastAsync(toast.Id, duration ?? GetToastDuration(severity));
+    }
+
+    private async Task DismissToastAsync(Guid toastId, TimeSpan duration)
+    {
+        try
+        {
+            await Task.Delay(duration, _priorLookupCancellation.Token);
+        }
+        catch
+        {
+            return;
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            ToastNotificationItem? toast = _toastNotifications.FirstOrDefault(item => item.Id == toastId);
+            if (toast is not null)
+            {
+                _toastNotifications.Remove(toast);
+            }
+        });
+    }
+
+    private static TimeSpan GetToastDuration(ToastSeverity severity) => severity switch
+    {
+        ToastSeverity.Success => TimeSpan.FromSeconds(4),
+        ToastSeverity.Warning => TimeSpan.FromSeconds(6),
+        ToastSeverity.Error => TimeSpan.FromSeconds(8),
+        _ => TimeSpan.FromSeconds(4),
+    };
+
+    private static ToastNotificationItem CreateToast(string message, ToastSeverity severity)
+    {
+        return severity switch
+        {
+            ToastSeverity.Success => new ToastNotificationItem
+            {
+                Icon = "✓",
+                Message = message,
+                Background = new SolidColorBrush(Color.Parse("#F0174D28")),
+                BorderBrush = new SolidColorBrush(Color.Parse("#FF2F8F3A")),
+                Foreground = Brushes.White,
+            },
+            ToastSeverity.Warning => new ToastNotificationItem
+            {
+                Icon = "⚠",
+                Message = message,
+                Background = new SolidColorBrush(Color.Parse("#F07A4E00")),
+                BorderBrush = new SolidColorBrush(Color.Parse("#FFFFB14A")),
+                Foreground = Brushes.White,
+            },
+            ToastSeverity.Error => new ToastNotificationItem
+            {
+                Icon = "✕",
+                Message = message,
+                Background = new SolidColorBrush(Color.Parse("#F07D2222")),
+                BorderBrush = new SolidColorBrush(Color.Parse("#FFFF7575")),
+                Foreground = Brushes.White,
+            },
+            _ => new ToastNotificationItem
+            {
+                Icon = "ℹ",
+                Message = message,
+                Background = new SolidColorBrush(Color.Parse("#F0215D8B")),
+                BorderBrush = new SolidColorBrush(Color.Parse("#FF65B7F7")),
+                Foreground = Brushes.White,
+            },
+        };
     }
 
     private static int GetSeriesTotalCount(SeriesRecord series) => Math.Max(series.InstanceCount, series.Instances.Count);
@@ -1002,6 +1442,7 @@ public partial class StudyViewerWindow : Window
         ActionWindowButton.IsChecked = _actionToolbarMode == ActionToolbarMode.Window;
         ActionToolsButton.IsChecked = _actionToolbarMode == ActionToolbarMode.Tools;
         ActionLayoutButton.IsChecked = _actionToolbarMode == ActionToolbarMode.Layout;
+        LinkedSyncToggleButton.IsChecked = _linkedViewSyncEnabled;
         OverlayToggleButton.IsChecked = _overlayEnabled;
     }
 
@@ -1213,6 +1654,62 @@ public partial class StudyViewerWindow : Window
         RestartActionToolbarHideTimer();
     }
 
+    private void OnLinkedSyncToggleClick(object? sender, RoutedEventArgs e)
+    {
+        _linkedViewSyncEnabled = LinkedSyncToggleButton.IsChecked != false;
+        UpdateActionModeButtons();
+        SaveViewerSettings();
+        if (_linkedViewSyncEnabled)
+        {
+            SynchronizeLinkedViews(_activeSlot);
+        }
+
+        RestartActionToolbarHideTimer();
+    }
+
+    private void LoadViewerSettings()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_viewerSettingsPath) || !File.Exists(_viewerSettingsPath))
+            {
+                return;
+            }
+
+            StudyViewerSettings? settings = JsonSerializer.Deserialize<StudyViewerSettings>(File.ReadAllText(_viewerSettingsPath));
+            if (settings is not null)
+            {
+                _linkedViewSyncEnabled = settings.LinkedViewSyncEnabled;
+            }
+        }
+        catch
+        {
+            _linkedViewSyncEnabled = true;
+        }
+    }
+
+    private void SaveViewerSettings()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_viewerSettingsPath))
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(_viewerSettingsPath) ?? string.Empty);
+            StudyViewerSettings settings = new()
+            {
+                LinkedViewSyncEnabled = _linkedViewSyncEnabled,
+            };
+
+            File.WriteAllText(_viewerSettingsPath, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch
+        {
+        }
+    }
+
     private void OnWindowPresetSelected(object? sender, RoutedEventArgs e)
     {
         if (sender is Button button)
@@ -1272,5 +1769,10 @@ public partial class StudyViewerWindow : Window
         public Point StartPoint { get; } = startPoint;
         public string ThumbnailPath { get; } = thumbnailPath;
         public bool IsStarted { get; set; }
+    }
+
+    private sealed class StudyViewerSettings
+    {
+        public bool LinkedViewSyncEnabled { get; init; } = true;
     }
 }

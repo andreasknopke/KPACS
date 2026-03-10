@@ -52,6 +52,11 @@ public partial class DicomViewPanel : UserControl
         double PanY,
         int ColorScheme);
 
+    public sealed record NavigationState(
+        double ZoomFactor,
+        bool FitToWindow,
+        Point CenterImagePoint);
+
     // ==============================================================================================
     // Image data (ported from TdView fields + DICOMdata record)
     // ==============================================================================================
@@ -674,6 +679,27 @@ public partial class DicomViewPanel : UserControl
             _colorScheme);
     }
 
+    public bool TryCaptureNavigationState(out NavigationState state)
+    {
+        state = default!;
+
+        Point controlCenter = new(RootGrid.Bounds.Width / 2.0, RootGrid.Bounds.Height / 2.0);
+        if (!TryGetImagePoint(controlCenter, out Point centerImagePoint))
+        {
+            if (_rawPixelData is null || _zoomFactor <= 0)
+            {
+                return false;
+            }
+
+            double x = (controlCenter.X - _panX) / _zoomFactor;
+            double y = (controlCenter.Y - _panY) / _zoomFactor;
+            centerImagePoint = new Point(x, y);
+        }
+
+        state = new NavigationState(_zoomFactor, _fitToWindow, centerImagePoint);
+        return true;
+    }
+
     public void ApplyDisplayState(DisplayState state)
     {
         _windowCenter = state.WindowCenter;
@@ -707,6 +733,40 @@ public partial class DicomViewPanel : UserControl
         RenderImage();
         UpdateOverlay();
         WindowChanged?.Invoke();
+    }
+
+    public void ApplyNavigationState(NavigationState state)
+    {
+        if (_rawPixelData is null)
+        {
+            return;
+        }
+
+        if (state.FitToWindow)
+        {
+            _fitToWindow = true;
+            ApplyFitToWindow();
+            UpdateOverlay();
+            ZoomChanged?.Invoke();
+            NotifyViewStateChanged();
+            return;
+        }
+
+        _fitToWindow = false;
+        _zoomFactor = Math.Clamp(state.ZoomFactor, 0.01, 20.0);
+        ApplyZoomTransform();
+
+        double cx = RootGrid.Bounds.Width / 2.0;
+        double cy = RootGrid.Bounds.Height / 2.0;
+        _panX = cx - (state.CenterImagePoint.X * _zoomFactor);
+        _panY = cy - (state.CenterImagePoint.Y * _zoomFactor);
+        _panTransform.X = _panX;
+        _panTransform.Y = _panY;
+        Update3DCursorOverlay();
+        UpdateMeasurementPresentation();
+        UpdateOverlay();
+        ZoomChanged?.Invoke();
+        NotifyViewStateChanged();
     }
 
     private void ApplyZoomTransform()

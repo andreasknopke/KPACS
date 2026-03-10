@@ -6,7 +6,9 @@ namespace KPACS.Viewer.Services;
 
 public sealed class DicomFilesystemScanService
 {
-    public async Task<FilesystemScanResult> ScanPathAsync(string path, bool preferDicomDir, CancellationToken cancellationToken = default)
+    private const FileReadOption ScanReadOption = FileReadOption.SkipLargeTags;
+
+    public async Task<FilesystemScanResult> ScanPathAsync(string path, bool preferDicomDir, IProgress<FilesystemScanProgress>? progress = null, CancellationToken cancellationToken = default)
     {
         var result = new FilesystemScanResult
         {
@@ -24,20 +26,20 @@ public sealed class DicomFilesystemScanService
             string dicomDirPath = Path.Combine(path, "DICOMDIR");
             if (preferDicomDir && File.Exists(dicomDirPath))
             {
-                return await ScanDicomDirectoryAsync(dicomDirPath, cancellationToken);
+                return await ScanDicomDirectoryAsync(dicomDirPath, progress, cancellationToken);
             }
 
-            return await ScanFilesAsync(path, EnumerateCandidateFiles(path), false, null, cancellationToken);
+            return await ScanFilesAsync(path, EnumerateCandidateFiles(path), false, null, progress, cancellationToken);
         }
 
         if (File.Exists(path) && string.Equals(Path.GetFileName(path), "DICOMDIR", StringComparison.OrdinalIgnoreCase))
         {
-            return await ScanDicomDirectoryAsync(path, cancellationToken);
+            return await ScanDicomDirectoryAsync(path, progress, cancellationToken);
         }
 
         if (File.Exists(path))
         {
-            return await ScanFilesAsync(path, [path], false, null, cancellationToken);
+            return await ScanFilesAsync(path, [path], false, null, progress, cancellationToken);
         }
 
         result.Messages.Add($"Scan path not found: {path}");
@@ -49,7 +51,7 @@ public sealed class DicomFilesystemScanService
         return Directory.Exists(folderPath) && File.Exists(Path.Combine(folderPath, "DICOMDIR"));
     }
 
-    private async Task<FilesystemScanResult> ScanDicomDirectoryAsync(string dicomDirPath, CancellationToken cancellationToken)
+    private async Task<FilesystemScanResult> ScanDicomDirectoryAsync(string dicomDirPath, IProgress<FilesystemScanProgress>? progress, CancellationToken cancellationToken)
     {
         string baseDirectory = Path.GetDirectoryName(dicomDirPath) ?? string.Empty;
 
@@ -61,16 +63,16 @@ public sealed class DicomFilesystemScanService
 
             if (referencedFiles.Count == 0)
             {
-                var fallback = await ScanFilesAsync(baseDirectory, EnumerateCandidateFiles(baseDirectory), false, dicomDirPath, cancellationToken);
+                var fallback = await ScanFilesAsync(baseDirectory, EnumerateCandidateFiles(baseDirectory), false, dicomDirPath, progress, cancellationToken);
                 fallback.Messages.Add("DICOMDIR had no usable file references. Recursive scan was used instead.");
                 return fallback;
             }
 
-            return await ScanFilesAsync(baseDirectory, referencedFiles.Distinct(StringComparer.OrdinalIgnoreCase), true, dicomDirPath, cancellationToken);
+            return await ScanFilesAsync(baseDirectory, referencedFiles.Distinct(StringComparer.OrdinalIgnoreCase), true, dicomDirPath, progress, cancellationToken);
         }
         catch (Exception ex)
         {
-            var fallback = await ScanFilesAsync(baseDirectory, EnumerateCandidateFiles(baseDirectory), false, dicomDirPath, cancellationToken);
+            var fallback = await ScanFilesAsync(baseDirectory, EnumerateCandidateFiles(baseDirectory), false, dicomDirPath, progress, cancellationToken);
             fallback.Messages.Add($"DICOMDIR scan fallback: {ex.Message}");
             return fallback;
         }
@@ -81,6 +83,7 @@ public sealed class DicomFilesystemScanService
         IEnumerable<string> files,
         bool usedDicomDir,
         string? dicomDirPath,
+        IProgress<FilesystemScanProgress>? progress,
         CancellationToken cancellationToken)
     {
         return await Task.Run(() =>
@@ -94,6 +97,7 @@ public sealed class DicomFilesystemScanService
 
             var studyLookup = new Dictionary<string, StudyDetails>(StringComparer.Ordinal);
             var seriesLookup = new Dictionary<string, SeriesRecord>(StringComparer.Ordinal);
+            int lastReportedCount = 0;
 
             foreach (string filePath in files)
             {
@@ -107,7 +111,7 @@ public sealed class DicomFilesystemScanService
 
                 try
                 {
-                    var dicomFile = DicomFile.Open(filePath, FileReadOption.ReadAll);
+                    var dicomFile = DicomFile.Open(filePath, ScanReadOption);
                     var dataset = dicomFile.Dataset;
                     if (!dataset.Contains(DicomTag.SOPInstanceUID) || !dataset.Contains(DicomTag.StudyInstanceUID) || !dataset.Contains(DicomTag.SeriesInstanceUID))
                     {
@@ -149,6 +153,7 @@ public sealed class DicomFilesystemScanService
 
                         studyLookup.Add(studyUid, details);
                         result.Studies.Add(details);
+                        ReportProgress(progress, result, filePath, details, $"Found {result.Studies.Count} studies so far.");
                     }
 
                     if (!seriesLookup.TryGetValue(seriesUid, out SeriesRecord? series))
@@ -174,10 +179,34 @@ public sealed class DicomFilesystemScanService
                         InstanceNumber = dataset.GetSingleValueOrDefault(DicomTag.InstanceNumber, 0),
                         FrameCount = dataset.GetSingleValueOrDefault(DicomTag.NumberOfFrames, 1),
                     });
+
+                    if (details.Series.Count > 0)
+                    {
+                        details.Study.SeriesCount = details.Series.Count;
+                        details.Study.InstanceCount = details.Series.Sum(candidateSeries => candidateSeries.Instances.Count);
+                        details.Study.Modalities = string.Join(", ",
+                            details.Series.Select(candidateSeries => candidateSeries.Modality)
+                                .Where(candidateModality => !string.IsNullOrWhiteSpace(candidateModality))
+                                .Distinct(StringComparer.OrdinalIgnoreCase)
+                                .OrderBy(candidateModality => candidateModality));
+                    }
+
+                    int processedCount = result.ScannedFiles + result.SkippedFiles;
+                    if (processedCount - lastReportedCount >= 25)
+                    {
+                        lastReportedCount = processedCount;
+                        ReportProgress(progress, result, filePath, details, $"Scanned {result.ScannedFiles} files, skipped {result.SkippedFiles}.");
+                    }
                 }
                 catch
                 {
                     result.SkippedFiles++;
+                    int processedCount = result.ScannedFiles + result.SkippedFiles;
+                    if (processedCount - lastReportedCount >= 25)
+                    {
+                        lastReportedCount = processedCount;
+                        ReportProgress(progress, result, filePath, null, $"Scanned {result.ScannedFiles} files, skipped {result.SkippedFiles}.");
+                    }
                 }
             }
 
@@ -211,8 +240,22 @@ public sealed class DicomFilesystemScanService
             });
 
             result.Messages.Add($"Scanned {result.ScannedFiles} DICOM files and found {result.Studies.Count} studies.");
+            ReportProgress(progress, result, sourcePath, null, result.Messages[^1]);
             return result;
         }, cancellationToken);
+    }
+
+    private static void ReportProgress(IProgress<FilesystemScanProgress>? progress, FilesystemScanResult result, string currentPath, StudyDetails? updatedStudy, string message)
+    {
+        progress?.Report(new FilesystemScanProgress
+        {
+            ScannedFiles = result.ScannedFiles,
+            SkippedFiles = result.SkippedFiles,
+            StudyCount = result.Studies.Count,
+            CurrentPath = currentPath,
+            Message = message,
+            UpdatedStudy = updatedStudy,
+        });
     }
 
     private static void TraverseDirectoryRecords(DicomDirectoryRecord? record, string baseDirectory, ICollection<string> files)

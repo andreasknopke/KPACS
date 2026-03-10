@@ -39,6 +39,28 @@
                         <Setter Property="Foreground" Value="#FF202020" />
                         <Setter Property="BorderBrush" Value="#FF9E9E9E" />
                 </Style>
+                <Style Selector="Border.networkInfoCard">
+                        <Setter Property="Background" Value="#FFF9FBFD" />
+                        <Setter Property="BorderBrush" Value="#FFD5E0E8" />
+                        <Setter Property="BorderThickness" Value="1" />
+                        <Setter Property="CornerRadius" Value="10" />
+                        <Setter Property="Padding" Value="10" />
+                        <Setter Property="MinHeight" Value="76" />
+                </Style>
+                <Style Selector="TextBlock.networkCardIcon">
+                        <Setter Property="FontSize" Value="18" />
+                </Style>
+                <Style Selector="TextBlock.networkCardTitle">
+                        <Setter Property="FontSize" Value="12" />
+                        <Setter Property="FontWeight" Value="SemiBold" />
+                        <Setter Property="Foreground" Value="#FF23313B" />
+                </Style>
+                <Style Selector="TextBlock.networkCardBody">
+                        <Setter Property="Foreground" Value="#FF5A6770" />
+                        <Setter Property="TextWrapping" Value="NoWrap" />
+                        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                        <Setter Property="FontSize" Value="11" />
+                </Style>
         </Window.Styles>
 
         <Grid>
@@ -136,16 +158,84 @@
                                         <Border Classes="section" Padding="6">
                                                 <TabControl x:Name="BrowserModeTabs" SelectionChanged="OnBrowserModeChanged">
                                                         <TabItem Header="Network">
-                                                                <StackPanel Margin="8" Spacing="8">
-                                                                        <TextBlock Text="Query the configured archive, inspect remote series, and double-click a study to retrieve representative images immediately while a full study fetch continues into the local imagebox." TextWrapping="Wrap" Foreground="#FF555555" />
-                                                                        <Border Background="#FFF2F2F2" BorderBrush="#FFB5B5B5" BorderThickness="1" Padding="8">
-                                                                                <StackPanel Spacing="6">
-                                                                                        <TextBlock Text="Network setup" FontWeight="SemiBold" Foreground="#FF333333" />
-                                                                                        <TextBlock x:Name="NetworkSetupSummaryText" TextWrapping="Wrap" Foreground="#FF4E4E4E" />
-                                                                                        <StackPanel Orientation="Horizontal" Spacing="8">
-                                                                                                <Button Content="Configure network..." Click="OnConfigClick" />
-                                                                                                <Button Content="Show network status" Click="OnInfoClick" />
+                                                                <StackPanel Margin="6" Spacing="6">
+                                                                        <TextBlock Text="Network query and health overview." Foreground="#FF555555" />
+                                                                        <Border x:Name="NetworkConfigurationHintBorder" Background="#FFF8F1D9" BorderBrush="#FFE3C67A" BorderThickness="1" CornerRadius="10" Padding="8" IsVisible="False">
+                                                                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                                                                                        <TextBlock Text="⚙" FontSize="16" VerticalAlignment="Top" />
+                                                                                        <StackPanel Grid.Column="1" Spacing="2">
+                                                                                                <TextBlock Text="Network setup needed" FontWeight="SemiBold" Foreground="#FF5A430F" />
+                                                                                                <TextBlock x:Name="NetworkConfigurationHintText" TextWrapping="Wrap" Foreground="#FF7A6532" />
                                                                                         </StackPanel>
+                                                                                        <Button Grid.Column="2" Content="Configure" MinHeight="28" Click="OnConfigClick" />
+                                                                                </Grid>
+                                                                        </Border>
+
+                                                                        <Border Background="#FFF2F6FA" BorderBrush="#FFD3DEE7" BorderThickness="1" CornerRadius="12" Padding="8">
+                                                                                <StackPanel Spacing="8">
+                                                                                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                                                                                <TextBlock Text="Network health" FontWeight="Bold" FontSize="14" Foreground="#FF25343E" VerticalAlignment="Center" />
+                                                                                                <Button Grid.Column="1" Content="Configure" Click="OnConfigClick" />
+                                                                                                <Button Grid.Column="2" Content="Details" Click="OnInfoClick" />
+                                                                                        </Grid>
+
+                                                                                        <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+                                                                                                <Border Classes="networkInfoCard">
+                                                                                                        <StackPanel Spacing="6">
+                                                                                                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                                                                                                        <TextBlock Classes="networkCardIcon" Text="☁" />
+                                                                                                                        <TextBlock Grid.Column="1" Classes="networkCardTitle" Text="Remote archive" VerticalAlignment="Center" />
+                                                                                                                        <Border x:Name="RemoteArchiveBadge" Grid.Column="2" CornerRadius="9" Padding="8,2" Background="#FFE7EDF2">
+                                                                                                                                <TextBlock x:Name="RemoteArchiveBadgeText" Foreground="#FF41515D" FontSize="11" FontWeight="SemiBold" />
+                                                                                                                        </Border>
+                                                                                                                </Grid>
+                                                                                                                <TextBlock x:Name="RemoteArchivePrimaryText" Classes="networkCardBody" />
+                                                                                                                <TextBlock x:Name="RemoteArchiveSecondaryText" Classes="networkCardBody" />
+                                                                                                        </StackPanel>
+                                                                                                </Border>
+
+                                                                                                <Border Grid.Column="1" Classes="networkInfoCard">
+                                                                                                        <StackPanel Spacing="6">
+                                                                                                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                                                                                                        <TextBlock Classes="networkCardIcon" Text="🗄" />
+                                                                                                                        <TextBlock Grid.Column="1" Classes="networkCardTitle" Text="Local imagebox" VerticalAlignment="Center" />
+                                                                                                                        <Border x:Name="LocalDatabaseBadge" Grid.Column="2" CornerRadius="9" Padding="8,2" Background="#FFE7EDF2">
+                                                                                                                                <TextBlock x:Name="LocalDatabaseBadgeText" Foreground="#FF41515D" FontSize="11" FontWeight="SemiBold" />
+                                                                                                                        </Border>
+                                                                                                                </Grid>
+                                                                                                                <TextBlock x:Name="LocalDatabasePrimaryText" Classes="networkCardBody" />
+                                                                                                                <TextBlock x:Name="LocalDatabaseSecondaryText" Classes="networkCardBody" />
+                                                                                                        </StackPanel>
+                                                                                                </Border>
+
+                                                                                                <Border Grid.Row="1" Classes="networkInfoCard">
+                                                                                                        <StackPanel Spacing="6">
+                                                                                                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                                                                                                        <TextBlock Classes="networkCardIcon" Text="📥" />
+                                                                                                                        <TextBlock Grid.Column="1" Classes="networkCardTitle" Text="Storage SCP / Inbox" VerticalAlignment="Center" />
+                                                                                                                        <Border x:Name="StorageScpBadge" Grid.Column="2" CornerRadius="9" Padding="8,2" Background="#FFE7EDF2">
+                                                                                                                                <TextBlock x:Name="StorageScpBadgeText" Foreground="#FF41515D" FontSize="11" FontWeight="SemiBold" />
+                                                                                                                        </Border>
+                                                                                                                </Grid>
+                                                                                                                <TextBlock x:Name="StorageScpPrimaryText" Classes="networkCardBody" />
+                                                                                                                <TextBlock x:Name="StorageScpSecondaryText" Classes="networkCardBody" />
+                                                                                                        </StackPanel>
+                                                                                                </Border>
+
+                                                                                                <Border Grid.Row="1" Grid.Column="1" Classes="networkInfoCard">
+                                                                                                        <StackPanel Spacing="6">
+                                                                                                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                                                                                                        <TextBlock Classes="networkCardIcon" Text="💾" />
+                                                                                                                        <TextBlock Grid.Column="1" Classes="networkCardTitle" Text="Drive space" VerticalAlignment="Center" />
+                                                                                                                        <Border x:Name="DiskHealthBadge" Grid.Column="2" CornerRadius="9" Padding="8,2" Background="#FFE7EDF2">
+                                                                                                                                <TextBlock x:Name="DiskHealthBadgeText" Foreground="#FF41515D" FontSize="11" FontWeight="SemiBold" />
+                                                                                                                        </Border>
+                                                                                                                </Grid>
+                                                                                                                <TextBlock x:Name="DiskHealthPrimaryText" Classes="networkCardBody" />
+                                                                                                                <TextBlock x:Name="DiskHealthSecondaryText" Classes="networkCardBody" />
+                                                                                                        </StackPanel>
+                                                                                                </Border>
+                                                                                        </Grid>
                                                                                 </StackPanel>
                                                                         </Border>
                                                                 </StackPanel>
@@ -209,10 +299,14 @@
                                                 </DataGrid>
                                         </Grid>
 
-                                        <Grid x:Name="FilesystemPanel" IsVisible="False" RowDefinitions="Auto,Auto,*">
+                                        <Grid x:Name="FilesystemPanel" IsVisible="False" RowDefinitions="Auto,Auto,Auto,*">
                                                 <TextBlock Text="Filesystem" FontWeight="Bold" Foreground="#FF333333" Margin="4,4,4,2" />
                                                 <TextBlock x:Name="FilesystemRootText" Grid.Row="1" Margin="4,0,4,6" Foreground="#FF555555" TextWrapping="Wrap" />
-                                                <Grid Grid.Row="2">
+                                                <StackPanel x:Name="FilesystemScanProgressPanel" Grid.Row="2" Margin="4,0,4,6" Spacing="4" IsVisible="False">
+                                                        <TextBlock x:Name="FilesystemScanProgressText" Foreground="#FF555555" TextWrapping="Wrap" />
+                                                        <ProgressBar x:Name="FilesystemScanProgressBar" Height="10" IsIndeterminate="True" Minimum="0" Maximum="100" />
+                                                </StackPanel>
+                                                <Grid Grid.Row="3">
                                                         <TextBlock x:Name="FilesystemHintText" Margin="8" Foreground="#FF666666" Text="Expand Computer, choose a drive or folder, then right-click it and select Scan folder." TextWrapping="Wrap" />
                                                         <TreeView x:Name="FilesystemTreeView"
                                                                   IsVisible="False"

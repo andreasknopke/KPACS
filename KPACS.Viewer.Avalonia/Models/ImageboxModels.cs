@@ -47,7 +47,7 @@ public sealed class StudyListItem
     public string DisplayPatientBirthDate => FormatDicomDate(PatientBirthDate);
     public string SelectionId => StudyKey > 0 ? $"db:{StudyKey}" : $"preview:{StudyInstanceUid}";
 
-    private static string FormatDicomDate(string value)
+    internal static string FormatDicomDate(string value)
     {
         if (string.IsNullOrWhiteSpace(value) || value.Length < 8)
         {
@@ -86,6 +86,71 @@ public sealed class StudyDetails
     public required StudyListItem Study { get; init; }
     public List<SeriesRecord> Series { get; } = [];
     public KPACS.DCMClasses.Models.StudyInfo? LegacyStudy { get; set; }
+}
+
+public sealed class PriorStudySummary
+{
+    public long StudyKey { get; init; }
+    public string StudyInstanceUid { get; init; } = string.Empty;
+    public string StudyDescription { get; init; } = string.Empty;
+    public string Modalities { get; init; } = string.Empty;
+    public string StudyDate { get; init; } = string.Empty;
+    public string SourceLabel { get; init; } = string.Empty;
+    public bool IsRemote { get; init; }
+    public string ArchiveId { get; init; } = string.Empty;
+
+    public string DisplayLabel
+    {
+        get
+        {
+            string modality = GetPrimaryModality(Modalities);
+            string description = StudyDescription.Trim();
+            string title = string.IsNullOrWhiteSpace(description)
+                ? (!string.IsNullOrWhiteSpace(modality) ? modality : "Prior study")
+                : !string.IsNullOrWhiteSpace(modality) && !description.StartsWith(modality, StringComparison.OrdinalIgnoreCase)
+                    ? $"{modality} {description}".Trim()
+                    : description;
+
+            string date = FormatShortDicomDate(StudyDate);
+            return string.IsNullOrWhiteSpace(date) ? title : $"{title} {date}";
+        }
+    }
+
+    public string ToolTipText
+    {
+        get
+        {
+            string fullDate = StudyListItem.FormatDicomDate(StudyDate);
+            string baseText = string.IsNullOrWhiteSpace(fullDate)
+                ? DisplayLabel
+                : $"{DisplayLabel} • {fullDate}";
+            return string.IsNullOrWhiteSpace(SourceLabel)
+                ? baseText
+                : $"{baseText} • {SourceLabel}";
+        }
+    }
+
+    private static string GetPrimaryModality(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        return value
+            .Split('\\', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault() ?? string.Empty;
+    }
+
+    private static string FormatShortDicomDate(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length < 8)
+        {
+            return string.Empty;
+        }
+
+        return $"{value[6..8]}.{value[4..6]}.{value[2..4]}";
+    }
 }
 
 public sealed class ImageboxTreeNode
@@ -130,6 +195,16 @@ public sealed class FilesystemScanResult
     public int SkippedFiles { get; set; }
     public List<StudyDetails> Studies { get; } = [];
     public List<string> Messages { get; } = [];
+}
+
+public sealed class FilesystemScanProgress
+{
+    public int ScannedFiles { get; init; }
+    public int SkippedFiles { get; init; }
+    public int StudyCount { get; init; }
+    public string CurrentPath { get; init; } = string.Empty;
+    public string Message { get; init; } = string.Empty;
+    public StudyDetails? UpdatedStudy { get; init; }
 }
 
 public sealed class PseudonymizeRequest

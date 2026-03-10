@@ -15,6 +15,8 @@ public sealed class NetworkSettingsWindow : Window
     private readonly NumericUpDown _archivePortBox;
     private readonly TextBox _remoteAeTitleBox;
     private readonly TextBox _inboxDirectoryBox;
+    private readonly CheckBox _enableDicomLoggingCheckBox;
+    private readonly TextBox _dicomLogPathBox;
 
     public NetworkSettingsWindow(DicomNetworkSettings settings)
     {
@@ -35,6 +37,8 @@ public sealed class NetworkSettingsWindow : Window
         _archivePortBox = new NumericUpDown { Value = archive.Port, Minimum = 1, Maximum = 65535, HorizontalAlignment = HorizontalAlignment.Stretch };
         _remoteAeTitleBox = new TextBox { Text = archive.RemoteAeTitle, HorizontalAlignment = HorizontalAlignment.Stretch };
         _inboxDirectoryBox = new TextBox { Text = settings.InboxDirectory, HorizontalAlignment = HorizontalAlignment.Stretch };
+        _enableDicomLoggingCheckBox = new CheckBox { IsChecked = settings.EnableDicomCommunicationLogging, Content = "Write detailed DICOM communication trace" };
+        _dicomLogPathBox = new TextBox { Text = settings.DicomCommunicationLogPath, HorizontalAlignment = HorizontalAlignment.Stretch };
 
         var cancelButton = new Button { Content = "Cancel", MinWidth = 96 };
         cancelButton.Click += (_, _) => Close((DicomNetworkSettings?)null);
@@ -45,7 +49,7 @@ public sealed class NetworkSettingsWindow : Window
         var formGrid = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions("170,230,170,*"),
-            RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto"),
+            RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,Auto"),
             ColumnSpacing = 14,
             RowSpacing = 14,
         };
@@ -68,6 +72,12 @@ public sealed class NetworkSettingsWindow : Window
         AddLabel(formGrid, "Inbound inbox", 3, 0);
         AddControl(formGrid, _inboxDirectoryBox, 3, 1, columnSpan: 3);
 
+        AddLabel(formGrid, "Diagnostics", 4, 0);
+        AddControl(formGrid, _enableDicomLoggingCheckBox, 4, 1, columnSpan: 3);
+
+        AddLabel(formGrid, "Trace log file", 5, 0);
+        AddControl(formGrid, _dicomLogPathBox, 5, 1, columnSpan: 3);
+
         Content = new Border
         {
             Padding = new Thickness(16),
@@ -85,7 +95,7 @@ public sealed class NetworkSettingsWindow : Window
                     formGrid,
                     new TextBlock
                     {
-                        Text = "Double-clicking a network study retrieves representative images first and continues a full background fetch into the local imagebox.",
+                        Text = "Double-clicking a network study retrieves representative images first and continues a full background fetch into the local imagebox. Enable diagnostics to capture local-side association, request, and response details in a text log.",
                         TextWrapping = TextWrapping.Wrap,
                         Foreground = new SolidColorBrush(Color.Parse("#FF4D4D4D")),
                     },
@@ -114,6 +124,8 @@ public sealed class NetworkSettingsWindow : Window
             LocalAeTitle = _localAeTitleBox.Text ?? string.Empty,
             LocalPort = Convert.ToInt32(_localPortBox.Value ?? 11112),
             InboxDirectory = _inboxDirectoryBox.Text ?? string.Empty,
+            EnableDicomCommunicationLogging = _enableDicomLoggingCheckBox.IsChecked == true,
+            DicomCommunicationLogPath = _dicomLogPathBox.Text ?? string.Empty,
             SelectedArchiveId = existingArchive.Id,
             Archives =
             [

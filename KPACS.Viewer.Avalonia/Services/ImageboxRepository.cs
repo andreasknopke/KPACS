@@ -240,6 +240,88 @@ public sealed class ImageboxRepository
         return await GetStudyDetailsAsync((long)scalar, cancellationToken);
     }
 
+    public async Task<List<StudyListItem>> FindPriorStudiesAsync(StudyListItem study, int maxResults = 12, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(study);
+
+        if (string.IsNullOrWhiteSpace(study.PatientId) && string.IsNullOrWhiteSpace(study.PatientName))
+        {
+            return [];
+        }
+
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        var whereParts = new List<string>
+        {
+            "s.study_instance_uid <> $studyInstanceUid",
+        };
+
+        await using var command = connection.CreateCommand();
+        command.Parameters.AddWithValue("$studyInstanceUid", study.StudyInstanceUid);
+
+        if (!string.IsNullOrWhiteSpace(study.PatientId))
+        {
+            whereParts.Add("s.patient_id = $patientId");
+            command.Parameters.AddWithValue("$patientId", study.PatientId.Trim());
+        }
+        else
+        {
+            whereParts.Add("s.patient_name = $patientName");
+            command.Parameters.AddWithValue("$patientName", study.PatientName.Trim());
+
+            if (!string.IsNullOrWhiteSpace(study.PatientBirthDate))
+            {
+                whereParts.Add("s.patient_birth_date = $patientBirthDate");
+                command.Parameters.AddWithValue("$patientBirthDate", study.PatientBirthDate.Trim());
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(study.StudyDate) && study.StudyDate.Length >= 8)
+        {
+            whereParts.Add("s.study_date < $studyDate");
+            command.Parameters.AddWithValue("$studyDate", study.StudyDate[..8]);
+        }
+
+        command.Parameters.AddWithValue("$maxResults", Math.Max(1, maxResults));
+        command.CommandText = $"""
+            SELECT s.study_key, s.study_instance_uid, s.patient_name, s.patient_id, s.patient_birth_date, s.accession_number,
+                   s.study_description, s.referring_physician, s.study_date, s.modalities,
+                   s.storage_path, s.imported_at_utc,
+                   COALESCE((SELECT COUNT(*) FROM series sr WHERE sr.study_key = s.study_key), 0) AS series_count,
+                   COALESCE((SELECT COUNT(*) FROM instances i JOIN series sr ON sr.series_key = i.series_key WHERE sr.study_key = s.study_key), 0) AS instance_count
+            FROM studies s
+            WHERE {string.Join(" AND ", whereParts)}
+            ORDER BY s.study_date DESC, s.imported_at_utc DESC, s.patient_name ASC
+            LIMIT $maxResults;
+            """;
+
+        var results = new List<StudyListItem>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add(new StudyListItem
+            {
+                StudyKey = reader.GetInt64(0),
+                StudyInstanceUid = reader.GetString(1),
+                PatientName = reader.GetString(2),
+                PatientId = reader.GetString(3),
+                PatientBirthDate = reader.GetString(4),
+                AccessionNumber = reader.GetString(5),
+                StudyDescription = reader.GetString(6),
+                ReferringPhysician = reader.GetString(7),
+                StudyDate = reader.GetString(8),
+                Modalities = reader.GetString(9),
+                StoragePath = reader.GetString(10),
+                ImportedAtUtc = ParseImportedAtUtc(reader.GetString(11)),
+                SeriesCount = reader.GetInt32(12),
+                InstanceCount = reader.GetInt32(13),
+            });
+        }
+
+        return results;
+    }
+
     public async Task<long> UpsertStudyAsync(StudyListItem study, CancellationToken cancellationToken = default)
     {
         await using var connection = new SqliteConnection(_connectionString);

@@ -23,10 +23,11 @@ public sealed class RemoteStudyRetrievalSession : IDisposable
     private readonly HashSet<string> _queuedPrioritySeries = new(StringComparer.Ordinal);
     private readonly HashSet<string> _seriesInFlight = new(StringComparer.Ordinal);
     private readonly HashSet<string> _imageInFlight = new(StringComparer.Ordinal);
-    private readonly SemaphoreSlim _imageMoveGate = new(4, 4);
+    private readonly SemaphoreSlim _imageMoveGate = new(1, 1);
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Task _backgroundSeriesTask;
     private readonly object _syncRoot = new();
+    private volatile bool _backgroundRetrievalEnabled;
     private bool _isFaulted;
     private string? _faultMessage;
 
@@ -62,6 +63,8 @@ public sealed class RemoteStudyRetrievalSession : IDisposable
 
     public string? FaultMessage => _faultMessage;
 
+    public bool IsBackgroundRetrievalEnabled => _backgroundRetrievalEnabled;
+
     public event Action? StudyChanged;
 
     public event Action<string>? StatusChanged;
@@ -79,8 +82,34 @@ public sealed class RemoteStudyRetrievalSession : IDisposable
         }
 
         await PrioritizeSeriesAsync(initialSeries.SeriesInstanceUid, GetRepresentativeIndex(initialSeries), 6, 0, cancellationToken);
-        await PrioritizeAdjacentSeriesAsync(initialSeries.SeriesInstanceUid, 1, cancellationToken);
         await WaitForAnyLocalImageAsync(initialSeries.SeriesInstanceUid, TimeSpan.FromSeconds(8), cancellationToken);
+
+        if (!_isFaulted)
+        {
+            await PrioritizeAdjacentSeriesAsync(initialSeries.SeriesInstanceUid, 1, cancellationToken);
+        }
+    }
+
+    public void StartBackgroundRetrieval()
+    {
+        if (_isFaulted || _backgroundRetrievalEnabled)
+        {
+            return;
+        }
+
+        _backgroundRetrievalEnabled = true;
+        PublishStatus("Continuing study download in the background...");
+    }
+
+    public Task RequestFocusedImageAsync(string seriesInstanceUid, int focusIndex, int direction = 0, CancellationToken cancellationToken = default)
+    {
+        if (_isFaulted || string.IsNullOrWhiteSpace(seriesInstanceUid))
+        {
+            return Task.CompletedTask;
+        }
+
+        _ = RequestImageWindowAsync(seriesInstanceUid, focusIndex, 0, direction, cancellationToken, fallbackToSeries: false);
+        return Task.CompletedTask;
     }
 
     public Task PrioritizeSeriesAsync(string seriesInstanceUid, int focusIndex, int radius = 6, int direction = 0, CancellationToken cancellationToken = default)
@@ -191,6 +220,12 @@ public sealed class RemoteStudyRetrievalSession : IDisposable
             }
         }
 
+        if (!_backgroundRetrievalEnabled)
+        {
+            await Task.Delay(250, cancellationToken);
+            return null;
+        }
+
         SeriesRecord? nextIncompleteSeries = StudyDetails.Series
             .Where(series => !IsSeriesComplete(series.SeriesInstanceUid))
             .OrderBy(series => series.SeriesNumber)
@@ -243,7 +278,7 @@ public sealed class RemoteStudyRetrievalSession : IDisposable
         }
     }
 
-    private async Task RequestImageWindowAsync(string seriesInstanceUid, int focusIndex, int radius, int direction, CancellationToken cancellationToken)
+    private async Task RequestImageWindowAsync(string seriesInstanceUid, int focusIndex, int radius, int direction, CancellationToken cancellationToken, bool fallbackToSeries = true)
     {
         if (_isFaulted || !_seriesPreviewByUid.TryGetValue(seriesInstanceUid, out RemoteSeriesPreview? preview) || preview.Images.Count == 0)
         {
@@ -291,7 +326,16 @@ public sealed class RemoteStudyRetrievalSession : IDisposable
                     bool success = await MoveImageAsync(seriesInstanceUid, remoteImage.SopInstUid, _disposeCts.Token);
                     if (!success)
                     {
-                        HaltRetrieval(_faultMessage ?? $"Remote retrieval failed for image {remoteImage.SopInstUid}.");
+                        if (fallbackToSeries)
+                        {
+                            PublishStatus(_faultMessage ?? $"Priority image retrieval failed for {remoteImage.SopInstUid}. Falling back to full series retrieval.");
+                            EnqueuePrioritySeries(seriesInstanceUid);
+                        }
+                        else
+                        {
+                            PublishStatus(_faultMessage ?? $"Thumbnail image retrieval failed for {remoteImage.SopInstUid}.");
+                        }
+
                         return;
                     }
 
@@ -323,43 +367,74 @@ public sealed class RemoteStudyRetrievalSession : IDisposable
             return true;
         }
 
-        bool success = false;
         string? failureMessage = null;
 
-        var requestClient = DicomClientFactory.Create(_client.IP, _client.Port, false, _client.LocalAET.Trim(), _client.RemoteAET.Trim());
-        var request = new DicomCMoveRequest(_destinationAeTitle, StudyInstanceUid, seriesInstanceUid, sopInstanceUid);
-        request.OnResponseReceived += (_, response) =>
+        for (int attempt = 1; attempt <= 2; attempt++)
         {
-            if (response.Status == DicomStatus.Pending)
+            bool success = false;
+            failureMessage = null;
+            DicomCommunicationTrace.Log("DICOM-SCU", $"[{_client.LocalAET.Trim()} -> {_client.RemoteAET.Trim()} {_client.IP}:{_client.Port}] SEND C-MOVE image attempt={attempt} dest={_destinationAeTitle} [study={StudyInstanceUid}, series={seriesInstanceUid}, sopInstance={sopInstanceUid}]");
+
+            var requestClient = DicomClientFactory.Create(_client.IP, _client.Port, false, _client.LocalAET.Trim(), _client.RemoteAET.Trim());
+            var request = new DicomCMoveRequest(_destinationAeTitle, StudyInstanceUid, seriesInstanceUid, sopInstanceUid);
+            request.OnResponseReceived += (_, response) =>
             {
-                return;
+                DicomCommunicationTrace.Log("DICOM-SCU", $"[{_client.LocalAET.Trim()} -> {_client.RemoteAET.Trim()} {_client.IP}:{_client.Port}] RECV C-MOVE image status={response.Status} [study={StudyInstanceUid}, series={seriesInstanceUid}, sopInstance={sopInstanceUid}]");
+                if (response.Status == DicomStatus.Pending)
+                {
+                    return;
+                }
+
+                if (response.Status == DicomStatus.Success)
+                {
+                    success = true;
+                    return;
+                }
+
+                failureMessage = $"C-MOVE image failed for {sopInstanceUid} with status {response.Status}.";
+            };
+
+            await requestClient.AddRequestAsync(request);
+            try
+            {
+                await requestClient.SendAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                DicomCommunicationTrace.LogException("DICOM-SCU", $"[{_client.LocalAET.Trim()} -> {_client.RemoteAET.Trim()} {_client.IP}:{_client.Port}] C-MOVE image failed", ex);
+                failureMessage = $"C-MOVE image failed: {ex.Message}";
             }
 
-            if (response.Status == DicomStatus.Success)
+            if (success)
             {
-                success = true;
-                return;
+                _faultMessage = null;
+                return true;
             }
 
-            failureMessage = $"C-MOVE image failed for {sopInstanceUid} with status {response.Status}.";
-        };
+            if (attempt < 2 && IsTransientConnectionFailure(failureMessage))
+            {
+                PublishStatus($"Retrying image retrieval for {sopInstanceUid} after transient connection refusal...");
+                await Task.Delay(250, cancellationToken);
+                continue;
+            }
 
-        await requestClient.AddRequestAsync(request);
-        try
-        {
-            await requestClient.SendAsync(cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            failureMessage = $"C-MOVE image failed: {ex.Message}";
+            break;
         }
 
-        if (!success)
+        _faultMessage = failureMessage ?? $"C-MOVE image failed for {sopInstanceUid}: the remote PACS did not confirm the retrieve request.";
+        return false;
+    }
+
+    private static bool IsTransientConnectionFailure(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
         {
-            _faultMessage = failureMessage ?? $"C-MOVE image failed for {sopInstanceUid}: the remote PACS did not confirm the retrieve request.";
+            return false;
         }
 
-        return success;
+        return message.Contains("10061", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("connection refused", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("Verbindung verweigerte", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task WaitForAnyLocalImageAsync(string seriesInstanceUid, TimeSpan timeout, CancellationToken cancellationToken)

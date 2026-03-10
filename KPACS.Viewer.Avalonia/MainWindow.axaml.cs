@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Net.Sockets;
 using System.Text.Json;
 using Avalonia.Media;
 using Avalonia.Controls;
@@ -7,6 +8,7 @@ using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using KPACS.DCMClasses;
 using KPACS.Viewer.Models;
 using KPACS.Viewer.Services;
 using KPACS.Viewer.Windows;
@@ -41,6 +43,8 @@ public partial class MainWindow : Window
     private string? _lastScannedFolderPath;
     private bool _lastScanPreferDicomDir;
     private string? _lastStorageScpToastMessage;
+    private bool _filesystemScanInProgress;
+    private int _networkInfoRefreshVersion;
     private double _patientPaneWidth = DefaultPatientPaneWidth;
     private double _seriesPaneHeight = DefaultSeriesPaneHeight;
 
@@ -66,10 +70,15 @@ public partial class MainWindow : Window
 
     private async Task InitializeAsync()
     {
-        BrowserModeTabs.SelectedIndex = 1;
-        _browserMode = BrowserMode.Database;
-        UpdateNetworkSetupSummary();
+        BrowserModeTabs.SelectedIndex = GetBrowserModeTabIndex(_browserMode);
+        _ = RefreshNetworkInfoPanelAsync();
         UpdateModeUi();
+
+        if (_browserMode == BrowserMode.Filesystem)
+        {
+            await EnsureFilesystemRootLoadedAsync();
+        }
+
         await RefreshCurrentModeAsync();
     }
 
@@ -117,8 +126,10 @@ public partial class MainWindow : Window
         ApplyPatientFilter();
 
         DatabaseStatsText.Text = _filesystemPreviewDetails.Count == 0
-            ? "No filesystem scan loaded."
-            : $"{_filesystemPreviewDetails.Count} studies available from the last filesystem scan.";
+            ? _filesystemScanInProgress ? "Filesystem scan in progress..." : "No filesystem scan loaded."
+            : _filesystemScanInProgress
+                ? $"Filesystem scan in progress — {_filesystemPreviewDetails.Count} studies found so far."
+                : $"{_filesystemPreviewDetails.Count} studies available from the last filesystem scan.";
 
         StatusText.Text = statusOverride ?? (_filesystemPreviewDetails.Count == 0
             ? "Expand Computer, choose a drive or folder, then right-click it and select Scan folder."
@@ -169,6 +180,7 @@ public partial class MainWindow : Window
 
         try
         {
+            DicomCommunicationTrace.Log("SEARCH", $"UI triggered network search. userInitiated={userInitiated}, archive={(archive is null ? "<none>" : archive.Name)}.");
             List<RemoteStudySearchResult> results = await _app.RemoteStudyBrowserService.SearchStudiesAsync(query);
             _networkSearchResults = results.ToDictionary(result => result.Study.StudyInstanceUid, StringComparer.Ordinal);
 
@@ -181,6 +193,7 @@ public partial class MainWindow : Window
                 .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
 
             _allStudies = results.Select(result => result.Study).ToList();
+
             BuildPatientRows();
             ApplyPatientFilter();
 
@@ -197,6 +210,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            DicomCommunicationTrace.LogException("SEARCH", "UI network search failed", ex);
             _networkSearchResults.Clear();
             _networkPreviewDetails.Clear();
             _networkSeriesPreviews.Clear();
@@ -490,31 +504,25 @@ public partial class MainWindow : Window
                 seriesPreviews ?? [],
                 CancellationToken.None);
             retrievalSession.StatusChanged += OnRemoteRetrievalStatusChanged;
-            SetStatus($"Opening remote study {selectedStudy.PatientName} with progressive retrieval...");
-            ShowToast($"Starting remote download for {selectedStudy.PatientName}. The viewer opens as soon as the first images arrive.", ToastSeverity.Info, TimeSpan.FromSeconds(6));
-            await retrievalSession.WarmupForViewerOpenAsync();
-            if (retrievalSession.IsFaulted && !HasAnyLocalInstances(retrievalSession.StudyDetails))
-            {
-                string failureMessage = retrievalSession.FaultMessage ?? "Remote retrieval failed before any images were received.";
-                SetStatus(failureMessage);
-                ShowToast(failureMessage, ToastSeverity.Error, TimeSpan.FromSeconds(8));
-                return;
-            }
+            SetStatus($"Opening remote study {selectedStudy.PatientName}. Thumbnails load first, then priors, then the remaining series.");
+            ShowToast($"Opening remote study {selectedStudy.PatientName}. Series thumbnails load first while prior lookup starts in the viewer.", ToastSeverity.Info, TimeSpan.FromSeconds(6));
 
             details = retrievalSession.StudyDetails;
             _networkPreviewDetails[selectedStudy.StudyInstanceUid] = details;
             selectedStudy.SeriesCount = details.Series.Count;
             selectedStudy.InstanceCount = details.Series.Sum(series => Math.Max(series.InstanceCount, series.Instances.Count));
-            if (!retrievalSession.IsFaulted)
-            {
-                ShowToast($"Remote study {selectedStudy.PatientName} is opening. Remaining series continue downloading in the background.", ToastSeverity.Success, TimeSpan.FromSeconds(6));
-            }
         }
+
+        PriorStudyLookupMode priorLookupMode = _browserMode == BrowserMode.Network
+            ? PriorStudyLookupMode.RemoteArchive
+            : PriorStudyLookupMode.LocalRepository;
 
         var viewer = new StudyViewerWindow(new ViewerStudyContext
         {
             StudyDetails = details,
             RemoteRetrievalSession = retrievalSession,
+            LoadPriorStudiesAsync = cancellationToken => _app.PriorStudyLookupService.FindPriorStudiesAsync(details.Study, priorLookupMode, cancellationToken),
+            LoadPriorStudyPreviewAsync = (priorStudy, onUpdated, cancellationToken) => _app.PriorStudyLookupService.LoadPriorStudyPreviewAsync(priorStudy, onUpdated, cancellationToken),
             LayoutRows = 1,
             LayoutColumns = 1,
         });
@@ -627,8 +635,8 @@ public partial class MainWindow : Window
         }
 
         await _app.NetworkSettingsService.SaveAsync(updatedSettings);
-        UpdateNetworkSetupSummary();
-        await RefreshCurrentModeAsync($"Saved network configuration. Storage SCP restarted on port {updatedSettings.LocalPort}.");
+        _ = RefreshNetworkInfoPanelAsync();
+        await RefreshCurrentModeAsync($"Saved network configuration. Storage SCP restarted on port {updatedSettings.LocalPort}. DICOM trace logging {(updatedSettings.EnableDicomCommunicationLogging ? "enabled" : "disabled")}.");
     }
 
     private async void OnInfoClick(object? sender, RoutedEventArgs e)
@@ -649,6 +657,8 @@ public partial class MainWindow : Window
         string info = $"Local AE: {settings.LocalAeTitle}\n"
             + $"Local port: {settings.LocalPort}\n"
             + $"Inbox: {settings.InboxDirectory}\n"
+            + $"DICOM trace logging: {(settings.EnableDicomCommunicationLogging ? "Enabled" : "Disabled")}\n"
+            + $"Trace log file: {settings.DicomCommunicationLogPath}\n"
             + $"Storage SCP: {_app.StorageScpService.LastStatus}\n\n"
             + (archive is null
                 ? "No remote archive configured."
@@ -737,10 +747,17 @@ public partial class MainWindow : Window
 
     private async void OnSendSelectedClick(object? sender, RoutedEventArgs e)
     {
-        if (_browserMode != BrowserMode.Database)
+        if (_browserMode is not (BrowserMode.Database or BrowserMode.Filesystem))
         {
-            SetStatus("Send is available for local studies in Database mode.");
-            ShowToast("Send is available for local studies in Database mode.", ToastSeverity.Warning);
+            SetStatus("Send is available for local studies in Database or Filesystem mode.");
+            ShowToast("Send is available for local studies in Database or Filesystem mode.", ToastSeverity.Warning);
+            return;
+        }
+
+        if (_browserMode == BrowserMode.Filesystem && _filesystemScanInProgress)
+        {
+            SetStatus("Wait until the filesystem scan finishes before sending studies.");
+            ShowToast("Wait until the filesystem scan finishes before sending studies.", ToastSeverity.Warning);
             return;
         }
 
@@ -765,7 +782,12 @@ public partial class MainWindow : Window
             var studiesToSend = new List<(StudyListItem Study, StudyDetails Details, int LocalFiles)>();
             foreach (StudyListItem selectedStudy in selectedStudies)
             {
-                StudyDetails? studyDetails = await _app.Repository.GetStudyDetailsAsync(selectedStudy.StudyKey);
+                StudyDetails? studyDetails = _browserMode switch
+                {
+                    BrowserMode.Database => await _app.Repository.GetStudyDetailsAsync(selectedStudy.StudyKey),
+                    BrowserMode.Filesystem => _filesystemPreviewDetails.GetValueOrDefault(selectedStudy.StudyInstanceUid),
+                    _ => null,
+                };
                 if (studyDetails is null)
                 {
                     continue;
@@ -788,8 +810,9 @@ public partial class MainWindow : Window
             int totalFiles = studiesToSend.Sum(item => item.LocalFiles);
             int completedOverall = 0;
             int successfulStudies = 0;
+            string studyLabel = _browserMode == BrowserMode.Filesystem ? "preview" : "local";
 
-            ShowToast($"Sending {studiesToSend.Count} local studies to archive {archive.Name} ({totalFiles} images).", ToastSeverity.Info, TimeSpan.FromSeconds(6));
+            ShowToast($"Sending {studiesToSend.Count} {studyLabel} studies to archive {archive.Name} ({totalFiles} images).", ToastSeverity.Info, TimeSpan.FromSeconds(6));
 
             foreach ((StudyListItem study, StudyDetails details, int localFiles) in studiesToSend)
             {
@@ -870,6 +893,7 @@ public partial class MainWindow : Window
     private async Task LoadFilesystemRootAsync(string path)
     {
         _filesystemRootPath = path;
+        SaveBrowserLayoutSettings();
         FilesystemRootText.Text = $"Root: {path}";
         FilesystemHintText.IsVisible = false;
         FilesystemTreeView.IsVisible = true;
@@ -886,6 +910,7 @@ public partial class MainWindow : Window
     private Task LoadComputerRootAsync()
     {
         _filesystemRootPath = null;
+        SaveBrowserLayoutSettings();
         FilesystemRootText.Text = "Root: Computer";
         FilesystemHintText.IsVisible = false;
         FilesystemTreeView.IsVisible = true;
@@ -902,23 +927,43 @@ public partial class MainWindow : Window
         ShowToast(preferDicomDir
             ? $"Scanning {folderPath} using DICOMDIR references..."
             : $"Searching {folderPath} for DICOM files. This can take a while for large folders...", ToastSeverity.Info, TimeSpan.FromSeconds(6));
-        FilesystemScanResult scanResult = await _app.FilesystemScanService.ScanPathAsync(folderPath, preferDicomDir);
 
-        _lastScannedFolderPath = folderPath;
-        _lastScanPreferDicomDir = preferDicomDir;
-        _filesystemPreviewDetails = scanResult.Studies.ToDictionary(study => study.Study.StudyInstanceUid, StringComparer.Ordinal);
-        _filesystemScannedStudies = scanResult.Studies.Select(study => study.Study).ToList();
+        BeginFilesystemScan(folderPath);
 
-        string summary = string.Join("  ", scanResult.Messages.Where(message => !string.IsNullOrWhiteSpace(message)));
-        string statusMessage = string.IsNullOrWhiteSpace(summary)
-            ? $"Scanned folder {folderPath}. {_filesystemPreviewDetails.Count} studies available for preview."
-            : summary;
+        try
+        {
+            var progress = new Progress<FilesystemScanProgress>(UpdateFilesystemScanProgress);
+            FilesystemScanResult scanResult = await _app.FilesystemScanService.ScanPathAsync(folderPath, preferDicomDir, progress);
 
-        ShowToast(_filesystemPreviewDetails.Count == 0
-            ? $"Scan finished for {folderPath}, but no DICOM studies were found."
-            : $"Scan finished for {folderPath}. {_filesystemPreviewDetails.Count} studies are ready for preview.", _filesystemPreviewDetails.Count == 0 ? ToastSeverity.Warning : ToastSeverity.Success, TimeSpan.FromSeconds(6));
+            _lastScannedFolderPath = folderPath;
+            _lastScanPreferDicomDir = preferDicomDir;
+            _filesystemPreviewDetails = scanResult.Studies.ToDictionary(study => study.Study.StudyInstanceUid, StringComparer.Ordinal);
+            _filesystemScannedStudies = scanResult.Studies.Select(study => study.Study).ToList();
 
-        await RefreshCurrentModeAsync(statusMessage, applySearchFilters: false);
+            string summary = string.Join("  ", scanResult.Messages.Where(message => !string.IsNullOrWhiteSpace(message)));
+            string statusMessage = string.IsNullOrWhiteSpace(summary)
+                ? $"Scanned folder {folderPath}. {_filesystemPreviewDetails.Count} studies available for preview."
+                : summary;
+
+            FinishFilesystemScan(statusMessage);
+            ShowToast(_filesystemPreviewDetails.Count == 0
+                ? $"Scan finished for {folderPath}, but no DICOM studies were found."
+                : $"Scan finished for {folderPath}. {_filesystemPreviewDetails.Count} studies are ready for preview.", _filesystemPreviewDetails.Count == 0 ? ToastSeverity.Warning : ToastSeverity.Success, TimeSpan.FromSeconds(6));
+
+            await RefreshCurrentModeAsync(statusMessage, applySearchFilters: false);
+        }
+        catch (Exception ex)
+        {
+            _filesystemScanInProgress = false;
+            if (FilesystemScanProgressPanel is not null)
+            {
+                FilesystemScanProgressPanel.IsVisible = false;
+            }
+
+            UpdateStudyActionAvailability();
+            SetStatus($"Filesystem scan failed: {ex.Message}");
+            ShowToast($"Filesystem scan failed: {ex.Message}", ToastSeverity.Error, TimeSpan.FromSeconds(8));
+        }
     }
 
     private void OnPseudonymizeClick(object? sender, RoutedEventArgs e)
@@ -1084,6 +1129,8 @@ public partial class MainWindow : Window
             _ => BrowserMode.Database,
         };
 
+        SaveBrowserLayoutSettings();
+
         if (PatientPanel is null
             || BrowserContentGrid is null
             || FilesystemPanel is null
@@ -1104,7 +1151,7 @@ public partial class MainWindow : Window
 
         if (_browserMode == BrowserMode.Filesystem && _filesystemRoots.Count == 0)
         {
-            await LoadComputerRootAsync();
+            await EnsureFilesystemRootLoadedAsync();
         }
 
         await RefreshCurrentModeAsync();
@@ -1351,17 +1398,229 @@ public partial class MainWindow : Window
 
     private void UpdateNetworkSetupSummary()
     {
-        if (NetworkSetupSummaryText is null)
+        _ = RefreshNetworkInfoPanelAsync();
+    }
+
+    private async Task RefreshNetworkInfoPanelAsync()
+    {
+        if (RemoteArchivePrimaryText is null
+            || RemoteArchiveSecondaryText is null
+            || RemoteArchiveBadge is null
+            || RemoteArchiveBadgeText is null
+            || LocalDatabasePrimaryText is null
+            || LocalDatabaseSecondaryText is null
+            || LocalDatabaseBadge is null
+            || LocalDatabaseBadgeText is null
+            || StorageScpPrimaryText is null
+            || StorageScpSecondaryText is null
+            || StorageScpBadge is null
+            || StorageScpBadgeText is null
+            || DiskHealthPrimaryText is null
+            || DiskHealthSecondaryText is null
+            || DiskHealthBadge is null
+            || DiskHealthBadgeText is null
+            || NetworkConfigurationHintBorder is null
+            || NetworkConfigurationHintText is null)
         {
             return;
         }
 
+        int refreshVersion = Interlocked.Increment(ref _networkInfoRefreshVersion);
         DicomNetworkSettings settings = _app.NetworkSettingsService.CurrentSettings;
         RemoteArchiveEndpoint? archive = settings.GetSelectedArchive();
-        NetworkSetupSummaryText.Text = archive is null
-            ? $"No remote archive configured yet. Local Storage SCP listens as {settings.LocalAeTitle} on port {settings.LocalPort}. Use 'Configure network...' to set the remote archive and receive settings."
-            : $"Remote archive: {archive.Name} ({archive.Host}:{archive.Port}, AE {archive.RemoteAeTitle})\nLocal Storage SCP: AE {settings.LocalAeTitle}, port {settings.LocalPort}\nInbox: {settings.InboxDirectory}\nStatus: {_app.StorageScpService.LastStatus}";
+
+        NetworkConfigurationHintBorder.IsVisible = archive is null;
+        NetworkConfigurationHintText.Text = archive is null
+            ? $"No archive configured. Local SCP: AE {settings.LocalAeTitle} / {settings.LocalPort}."
+            : string.Empty;
+
+        ApplyHealthBadge(RemoteArchiveBadge, RemoteArchiveBadgeText, archive is null ? "Setup needed" : "Checking", HealthTone.Warning);
+        RemoteArchivePrimaryText.Text = archive is null
+            ? "Configure an archive for query and send."
+            : $"{archive.Name} • {archive.Host}:{archive.Port} • AE {archive.RemoteAeTitle}";
+        RemoteArchiveSecondaryText.Text = archive is null
+            ? "Use Configure to add the endpoint."
+            : "Testing reachability...";
+
+        bool localDbExists = File.Exists(_app.Paths.DatabasePath);
+        var dbInfo = new FileInfo(_app.Paths.DatabasePath);
+        int localStudyCount = 0;
+        try
+        {
+            localStudyCount = (await _app.Repository.SearchStudiesAsync(new StudyQuery())).Count;
+        }
+        catch
+        {
+            localStudyCount = 0;
+        }
+
+        ApplyHealthBadge(LocalDatabaseBadge, LocalDatabaseBadgeText, localDbExists ? "Healthy" : "Missing", localDbExists ? HealthTone.Success : HealthTone.Error);
+        LocalDatabasePrimaryText.Text = localDbExists
+            ? $"{localStudyCount} studies • {FormatFileSize(dbInfo.Length)} • {Path.GetFileName(_app.Paths.DatabasePath)}"
+            : "Database file not found.";
+        LocalDatabaseSecondaryText.Text = localDbExists
+            ? $"Updated {dbInfo.LastWriteTime:dd.MM.yy HH:mm} • {CompactPath(_app.Paths.DatabasePath)}"
+            : CompactPath(_app.Paths.DatabasePath);
+
+        bool scpRunning = _app.StorageScpService.IsRunning;
+        string scpStatus = _app.StorageScpService.LastStatus;
+        ApplyHealthBadge(StorageScpBadge, StorageScpBadgeText, scpRunning ? "Listening" : "Stopped", scpRunning ? HealthTone.Success : HealthTone.Warning);
+        StorageScpPrimaryText.Text = $"AE {settings.LocalAeTitle} • Port {settings.LocalPort} • {_app.StorageScpService.ReceivedFiles} received files";
+        StorageScpSecondaryText.Text = $"Inbox {CompactPath(settings.InboxDirectory)} • Trace {(settings.EnableDicomCommunicationLogging ? "On" : "Off")} • {CompactStatus(scpStatus)}";
+
+        DriveHealth diskHealth = GetDriveHealth(_app.Paths.DatabasePath, settings.InboxDirectory);
+        ApplyHealthBadge(DiskHealthBadge, DiskHealthBadgeText, diskHealth.Label, diskHealth.Tone);
+        DiskHealthPrimaryText.Text = diskHealth.PrimaryText;
+        DiskHealthSecondaryText.Text = diskHealth.SecondaryText;
+
+        if (archive is null)
+        {
+            return;
+        }
+
+        (bool reachable, string detail) = await CheckArchiveConnectivityAsync(archive);
+        if (refreshVersion != _networkInfoRefreshVersion)
+        {
+            return;
+        }
+
+        ApplyHealthBadge(RemoteArchiveBadge, RemoteArchiveBadgeText, reachable ? "Online" : "Offline", reachable ? HealthTone.Success : HealthTone.Error);
+        RemoteArchiveSecondaryText.Text = reachable
+            ? $"Reachable • {CompactStatus(detail)}"
+            : $"Unreachable • {CompactStatus(detail)}";
     }
+
+    private static (bool reachable, string detail) SetConnectivityResult(bool reachable, string detail) => (reachable, detail);
+
+    private async Task<(bool reachable, string detail)> CheckArchiveConnectivityAsync(RemoteArchiveEndpoint archive)
+    {
+        using var client = new TcpClient();
+        try
+        {
+            Task connectTask = client.ConnectAsync(archive.Host, archive.Port);
+            Task completed = await Task.WhenAny(connectTask, Task.Delay(TimeSpan.FromSeconds(1.5)));
+            if (completed != connectTask)
+            {
+                return SetConnectivityResult(false, "Timed out during TCP connect.");
+            }
+
+            await connectTask;
+            return SetConnectivityResult(true, $"{archive.Host}:{archive.Port} accepts TCP connections.");
+        }
+        catch (Exception ex)
+        {
+            return SetConnectivityResult(false, ex.Message);
+        }
+    }
+
+    private DriveHealth GetDriveHealth(string databasePath, string inboxDirectory)
+    {
+        try
+        {
+            string dbRoot = Path.GetPathRoot(databasePath) ?? string.Empty;
+            var dbDrive = !string.IsNullOrWhiteSpace(dbRoot) ? new DriveInfo(dbRoot) : null;
+
+            string inboxRoot = Path.GetPathRoot(inboxDirectory) ?? string.Empty;
+            var inboxDrive = !string.IsNullOrWhiteSpace(inboxRoot) ? new DriveInfo(inboxRoot) : null;
+
+            if (dbDrive is null && inboxDrive is null)
+            {
+                return new DriveHealth("Unknown", HealthTone.Warning, "Drive information is unavailable.", "Could not resolve the database or inbox drive.");
+            }
+
+            DriveInfo primary = dbDrive ?? inboxDrive!;
+            double freePercent = primary.TotalSize <= 0 ? 0 : (double)primary.AvailableFreeSpace / primary.TotalSize;
+            HealthTone tone = freePercent switch
+            {
+                < 0.10 => HealthTone.Error,
+                < 0.20 => HealthTone.Warning,
+                _ => HealthTone.Success,
+            };
+
+            string label = tone switch
+            {
+                HealthTone.Error => "Low space",
+                HealthTone.Warning => "Watch",
+                _ => "Healthy",
+            };
+
+            string primaryText = $"DB drive {primary.Name} • {FormatFileSize(primary.AvailableFreeSpace)} free of {FormatFileSize(primary.TotalSize)}";
+            string secondaryText = inboxDrive is not null && !string.Equals(inboxDrive.Name, primary.Name, StringComparison.OrdinalIgnoreCase)
+                ? $"Inbox {inboxDrive.Name} • {FormatFileSize(inboxDrive.AvailableFreeSpace)} free"
+                : $"Free space ratio: {freePercent:P0}";
+
+            return new DriveHealth(label, tone, primaryText, secondaryText);
+        }
+        catch (Exception ex)
+        {
+            return new DriveHealth("Unknown", HealthTone.Warning, "Drive information is unavailable.", ex.Message);
+        }
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double size = bytes;
+        int unitIndex = 0;
+        while (size >= 1024 && unitIndex < units.Length - 1)
+        {
+            size /= 1024;
+            unitIndex++;
+        }
+
+        return unitIndex == 0 ? $"{size:0} {units[unitIndex]}" : $"{size:0.0} {units[unitIndex]}";
+    }
+
+    private static string CompactPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return string.Empty;
+        }
+
+        string fileName = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        string parent = Path.GetDirectoryName(path) ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return path;
+        }
+
+        string parentName = Path.GetFileName(parent.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        return string.IsNullOrWhiteSpace(parentName) ? fileName : $"{parentName}/{fileName}";
+    }
+
+    private static string CompactStatus(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        string singleLine = value.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return singleLine.Length <= 52 ? singleLine : singleLine[..49] + "...";
+    }
+
+    private static void ApplyHealthBadge(Border badgeBorder, TextBlock badgeText, string label, HealthTone tone)
+    {
+        badgeText.Text = label;
+        (badgeBorder.Background, badgeText.Foreground) = tone switch
+        {
+            HealthTone.Success => (new SolidColorBrush(Color.Parse("#FFDFF6E5")), new SolidColorBrush(Color.Parse("#FF1B6E34"))),
+            HealthTone.Warning => (new SolidColorBrush(Color.Parse("#FFFCEFD6")), new SolidColorBrush(Color.Parse("#FF8A5A00"))),
+            HealthTone.Error => (new SolidColorBrush(Color.Parse("#FFF7DEDE")), new SolidColorBrush(Color.Parse("#FF9C2D2D"))),
+            _ => (new SolidColorBrush(Color.Parse("#FFE7EDF2")), new SolidColorBrush(Color.Parse("#FF41515D"))),
+        };
+    }
+
+    private enum HealthTone
+    {
+        Neutral,
+        Success,
+        Warning,
+        Error,
+    }
+
+    private sealed record DriveHealth(string Label, HealthTone Tone, string PrimaryText, string SecondaryText);
 
     private async void OnStudyDoubleTapped(object? sender, TappedEventArgs e) => await OpenSelectedStudyAsync();
 
@@ -1464,10 +1723,83 @@ public partial class MainWindow : Window
         int selectedCount = GetSelectedStudies().Count;
         bool singleSelected = selectedCount == 1;
         bool anySelected = selectedCount > 0;
+        bool sendEnabled = anySelected
+            && !_filesystemScanInProgress
+            && (_browserMode == BrowserMode.Database || _browserMode == BrowserMode.Filesystem);
 
         ViewActionButton.IsEnabled = singleSelected;
-        SendActionButton.IsEnabled = _browserMode == BrowserMode.Database && anySelected;
+        SendActionButton.IsEnabled = sendEnabled;
         ModifyActionButton.IsEnabled = _browserMode == BrowserMode.Database && singleSelected;
+    }
+
+    private void BeginFilesystemScan(string folderPath)
+    {
+        _filesystemScanInProgress = true;
+        _filesystemPreviewDetails = new Dictionary<string, StudyDetails>(StringComparer.Ordinal);
+        _filesystemScannedStudies = [];
+        _seriesRows.Clear();
+
+        if (FilesystemScanProgressPanel is not null)
+        {
+            FilesystemScanProgressPanel.IsVisible = true;
+        }
+
+        if (FilesystemScanProgressBar is not null)
+        {
+            FilesystemScanProgressBar.IsIndeterminate = true;
+            FilesystemScanProgressBar.Value = 0;
+        }
+
+        if (FilesystemScanProgressText is not null)
+        {
+            FilesystemScanProgressText.Text = $"Scanning {folderPath}...";
+        }
+
+        LoadFilesystemPreviewStudies($"Scanning folder: {folderPath}", applySearchFilters: false);
+        UpdateStudyActionAvailability();
+    }
+
+    private void UpdateFilesystemScanProgress(FilesystemScanProgress progress)
+    {
+        if (FilesystemScanProgressText is not null)
+        {
+            FilesystemScanProgressText.Text = $"{progress.ScannedFiles} files scanned, {progress.SkippedFiles} skipped, {progress.StudyCount} studies found.";
+        }
+
+        if (progress.UpdatedStudy is not null)
+        {
+            _filesystemPreviewDetails[progress.UpdatedStudy.Study.StudyInstanceUid] = progress.UpdatedStudy;
+            _filesystemScannedStudies = _filesystemPreviewDetails.Values.Select(study => study.Study).ToList();
+            LoadFilesystemPreviewStudies(progress.Message, applySearchFilters: false);
+        }
+        else if (!string.IsNullOrWhiteSpace(progress.Message))
+        {
+            SetStatus(progress.Message);
+        }
+    }
+
+    private void FinishFilesystemScan(string statusMessage)
+    {
+        _filesystemScanInProgress = false;
+
+        if (FilesystemScanProgressPanel is not null)
+        {
+            FilesystemScanProgressPanel.IsVisible = true;
+        }
+
+        if (FilesystemScanProgressBar is not null)
+        {
+            FilesystemScanProgressBar.IsIndeterminate = false;
+            FilesystemScanProgressBar.Value = 100;
+        }
+
+        if (FilesystemScanProgressText is not null)
+        {
+            FilesystemScanProgressText.Text = $"Scan complete. {_filesystemPreviewDetails.Count} studies are ready for preview and send.";
+        }
+
+        UpdateStudyActionAvailability();
+        SetStatus(statusMessage);
     }
 
     private void OnPatientStudySplitterPointerReleased(object? sender, PointerReleasedEventArgs e)
@@ -1520,12 +1852,18 @@ public partial class MainWindow : Window
             {
                 _patientPaneWidth = Math.Clamp(settings.PatientPaneWidth, MinPatientPaneWidth, MaxPatientPaneWidth);
                 _seriesPaneHeight = Math.Clamp(settings.SeriesPaneHeight, MinSeriesPaneHeight, MaxSeriesPaneHeight);
+                _showPatientPanel = settings.ShowPatientPanel;
+                _browserMode = settings.LastBrowserMode;
+                _filesystemRootPath = string.IsNullOrWhiteSpace(settings.FilesystemRootPath) ? null : settings.FilesystemRootPath;
             }
         }
         catch
         {
             _patientPaneWidth = DefaultPatientPaneWidth;
             _seriesPaneHeight = DefaultSeriesPaneHeight;
+            _showPatientPanel = true;
+            _browserMode = BrowserMode.Database;
+            _filesystemRootPath = null;
         }
     }
 
@@ -1538,6 +1876,9 @@ public partial class MainWindow : Window
             {
                 PatientPaneWidth = Math.Clamp(_patientPaneWidth, MinPatientPaneWidth, MaxPatientPaneWidth),
                 SeriesPaneHeight = Math.Clamp(_seriesPaneHeight, MinSeriesPaneHeight, MaxSeriesPaneHeight),
+                ShowPatientPanel = _showPatientPanel,
+                LastBrowserMode = _browserMode,
+                FilesystemRootPath = _filesystemRootPath,
             };
 
             File.WriteAllText(_browserLayoutSettingsPath, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
@@ -1545,6 +1886,17 @@ public partial class MainWindow : Window
         catch
         {
         }
+    }
+
+    private async Task EnsureFilesystemRootLoadedAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(_filesystemRootPath) && Directory.Exists(_filesystemRootPath))
+        {
+            await LoadFilesystemRootAsync(_filesystemRootPath);
+            return;
+        }
+
+        await LoadComputerRootAsync();
     }
 
     private static bool HasAnyLocalInstances(StudyDetails details) =>
@@ -1746,6 +2098,17 @@ public partial class MainWindow : Window
         }
     }
 
+    private static int GetBrowserModeTabIndex(BrowserMode mode) => mode switch
+    {
+        BrowserMode.Network => 0,
+        BrowserMode.Database => 1,
+        BrowserMode.Filesystem => 2,
+        BrowserMode.Email => 3,
+        _ => 1,
+    };
+
+
+
     private static void EnsureFilesystemNodeChildrenLoaded(FilesystemFolderNode node)
     {
         if (node.ChildrenLoaded || node.IsPlaceholder || string.IsNullOrWhiteSpace(node.FullPath) || !Directory.Exists(node.FullPath))
@@ -1802,5 +2165,8 @@ public partial class MainWindow : Window
     {
         public double PatientPaneWidth { get; init; } = DefaultPatientPaneWidth;
         public double SeriesPaneHeight { get; init; } = DefaultSeriesPaneHeight;
+        public bool ShowPatientPanel { get; init; } = true;
+        public BrowserMode LastBrowserMode { get; init; } = BrowserMode.Database;
+        public string? FilesystemRootPath { get; init; }
     }
 }

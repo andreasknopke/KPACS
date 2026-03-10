@@ -5,6 +5,8 @@ public sealed class DicomNetworkSettings
     public string LocalAeTitle { get; set; } = "KPACS";
     public int LocalPort { get; set; } = 11112;
     public string InboxDirectory { get; set; } = string.Empty;
+    public bool EnableDicomCommunicationLogging { get; set; }
+    public string DicomCommunicationLogPath { get; set; } = string.Empty;
     public string SelectedArchiveId { get; set; } = string.Empty;
     public List<RemoteArchiveEndpoint> Archives { get; set; } =
     [
@@ -38,6 +40,9 @@ public sealed class DicomNetworkSettings
         InboxDirectory = string.IsNullOrWhiteSpace(InboxDirectory)
             ? Path.Combine(applicationDirectory, "network-inbox")
             : InboxDirectory.Trim();
+        DicomCommunicationLogPath = string.IsNullOrWhiteSpace(DicomCommunicationLogPath)
+            ? Path.Combine(applicationDirectory, "dicom-communication.log")
+            : Path.GetFullPath(DicomCommunicationLogPath.Trim());
 
         if (Archives.Count == 0)
         {

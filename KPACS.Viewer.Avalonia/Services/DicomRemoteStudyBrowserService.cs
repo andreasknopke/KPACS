@@ -9,6 +9,8 @@ namespace KPACS.Viewer.Services;
 
 public sealed class DicomRemoteStudyBrowserService
 {
+    private const int RepresentativeImageMoveConcurrency = 2;
+
     private readonly NetworkSettingsService _settingsService;
     private readonly ImageboxRepository _repository;
 
@@ -20,10 +22,23 @@ public sealed class DicomRemoteStudyBrowserService
 
     public RemoteArchiveEndpoint? GetSelectedArchive() => _settingsService.CurrentSettings.GetSelectedArchive();
 
+    public RemoteArchiveEndpoint? GetArchiveById(string? archiveId)
+    {
+        if (string.IsNullOrWhiteSpace(archiveId))
+        {
+            return GetSelectedArchive();
+        }
+
+        return _settingsService.CurrentSettings.Archives.FirstOrDefault(archive => string.Equals(archive.Id, archiveId, StringComparison.Ordinal))
+            ?? GetSelectedArchive();
+    }
+
     public async Task<List<RemoteStudySearchResult>> SearchStudiesAsync(StudyQuery query, CancellationToken cancellationToken = default)
     {
         RemoteArchiveEndpoint archive = GetSelectedArchive()
             ?? throw new InvalidOperationException("No remote archive is configured.");
+
+        DicomCommunicationTrace.Log("SEARCH", $"Starting remote study search on {archive.Name} ({archive.Host}:{archive.Port}, AE {archive.RemoteAeTitle}) {SummarizeStudyQuery(query)}.");
 
         var client = CreateClient(archive);
         var filter = new StudyInfo
@@ -43,31 +58,40 @@ public sealed class DicomRemoteStudyBrowserService
             StudyDate = BuildDicomDateRange(query.FromStudyDate, query.ToStudyDate),
         };
 
-        List<StudyInfo> remoteStudies = await client.FindStudiesAsync(filter, cancellationToken);
-        return remoteStudies
-            .OrderByDescending(study => study.StudyDate)
-            .ThenBy(study => study.PatientName)
-            .Select(study => new RemoteStudySearchResult
-            {
-                Archive = archive,
-                LegacyStudy = study,
-                Study = new StudyListItem
+        try
+        {
+            List<StudyInfo> remoteStudies = await client.FindStudiesAsync(filter, cancellationToken);
+
+            return remoteStudies
+                .OrderByDescending(study => study.StudyDate)
+                .ThenBy(study => study.PatientName)
+                .Select(study => new RemoteStudySearchResult
                 {
-                    StudyInstanceUid = study.StudyInstanceUid,
-                    PatientName = study.PatientName,
-                    PatientId = study.PatientId,
-                    PatientBirthDate = study.PatientBD,
-                    AccessionNumber = study.AccessionNumber,
-                    StudyDescription = study.StudyDescription,
-                    ReferringPhysician = study.PhysiciansName,
-                    StudyDate = study.StudyDate,
-                    Modalities = study.Modalities,
-                    StoragePath = archive.Name,
-                    InstanceCount = Math.Max(study.Image, 0),
-                    IsPreviewOnly = true,
-                },
-            })
-            .ToList();
+                    Archive = archive,
+                    LegacyStudy = study,
+                    Study = new StudyListItem
+                    {
+                        StudyInstanceUid = study.StudyInstanceUid,
+                        PatientName = study.PatientName,
+                        PatientId = study.PatientId,
+                        PatientBirthDate = study.PatientBD,
+                        AccessionNumber = study.AccessionNumber,
+                        StudyDescription = study.StudyDescription,
+                        ReferringPhysician = study.PhysiciansName,
+                        StudyDate = study.StudyDate,
+                        Modalities = study.Modalities,
+                        StoragePath = archive.Name,
+                        InstanceCount = Math.Max(study.Image, 0),
+                        IsPreviewOnly = true,
+                    },
+                })
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            DicomCommunicationTrace.LogException("SEARCH", $"Remote study search failed on {archive.Name}", ex);
+            throw;
+        }
     }
 
     private static string BuildWildcardMatch(string? value)
@@ -85,6 +109,40 @@ public sealed class DicomRemoteStudyBrowserService
 
         return $"*{trimmed}*";
     }
+
+    private static string SummarizeStudyQuery(StudyQuery query)
+    {
+        List<string> parts = [];
+
+        AppendQueryPart(parts, "patientId", query.PatientId);
+        AppendQueryPart(parts, "patientName", query.PatientName);
+        AppendQueryPart(parts, "birthDate", query.PatientBirthDate);
+        AppendQueryPart(parts, "accession", query.AccessionNumber);
+        AppendQueryPart(parts, "referrer", query.ReferringPhysician);
+        AppendQueryPart(parts, "description", query.StudyDescription);
+        AppendQueryPart(parts, "quick", query.QuickSearch);
+        if (query.Modalities.Count > 0)
+        {
+            parts.Add($"modalities={string.Join("\\", query.Modalities)}");
+        }
+
+        if (query.FromStudyDate is not null || query.ToStudyDate is not null)
+        {
+            parts.Add($"dateRange={query.FromStudyDate:yyyy-MM-dd}..{query.ToStudyDate:yyyy-MM-dd}");
+        }
+
+        return parts.Count == 0 ? "[no filters]" : $"[{string.Join(", ", parts)}]";
+    }
+
+    private static void AppendQueryPart(List<string> parts, string label, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            parts.Add($"{label}={value.Trim()}");
+        }
+    }
+
+
 
     public async Task<(StudyDetails Details, List<RemoteSeriesPreview> Series)> LoadStudyPreviewAsync(RemoteStudySearchResult result, CancellationToken cancellationToken = default)
     {
@@ -185,6 +243,41 @@ public sealed class DicomRemoteStudyBrowserService
         return (details, seriesPreviews);
     }
 
+    public async Task LoadRepresentativeStudyPreviewIncrementallyAsync(RemoteStudySearchResult result, Action<StudyDetails> onUpdated, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        ArgumentNullException.ThrowIfNull(onUpdated);
+
+        StudyDetails? existingLocal = await _repository.GetStudyDetailsByStudyInstanceUidAsync(result.Study.StudyInstanceUid, cancellationToken);
+        (StudyDetails previewDetails, List<RemoteSeriesPreview> seriesPreviews) = await LoadStudyPreviewAsync(result, cancellationToken);
+        if (existingLocal is not null)
+        {
+            MergeLocalStudyIntoPreview(previewDetails, existingLocal);
+        }
+
+        onUpdated(CloneStudyDetails(previewDetails));
+
+        foreach (RemoteSeriesPreview preview in seriesPreviews)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            ImageInfo? representative = preview.GetRepresentativeImage();
+            if (representative is null || string.IsNullOrWhiteSpace(preview.LegacySeries.SerInstUid) || string.IsNullOrWhiteSpace(representative.SopInstUid))
+            {
+                continue;
+            }
+
+            await MoveImageAsync(result.Archive, result.Study.StudyInstanceUid, preview.LegacySeries.SerInstUid, representative.SopInstUid, _settingsService.CurrentSettings.LocalAeTitle, cancellationToken);
+
+            await PublishMergedPreviewUpdateAsync(previewDetails, result.Study.StudyInstanceUid, onUpdated, cancellationToken);
+        }
+
+        if (!IsStudyFullyLocal(previewDetails))
+        {
+            _ = ContinuePriorStudyFetchAsync(result, previewDetails, onUpdated, cancellationToken);
+        }
+    }
+
     public async Task<RemoteStudyRetrievalSession> CreateRetrievalSessionAsync(RemoteStudySearchResult result, StudyDetails mergedStudy, IReadOnlyCollection<RemoteSeriesPreview> seriesPreviews, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(result);
@@ -238,40 +331,48 @@ public sealed class DicomRemoteStudyBrowserService
         ArgumentNullException.ThrowIfNull(result);
         DicomNetworkSettings settings = _settingsService.CurrentSettings;
         RemoteArchiveEndpoint archive = result.Archive;
-        var client = CreateClient(archive);
 
         status?.Report($"Starting retrieval from {archive.Name}...");
-        Task<bool> fullFetchTask = client.MoveStudyAsync(result.Study.StudyInstanceUid, settings.LocalAeTitle, cancellationToken: cancellationToken);
 
         IReadOnlyCollection<RemoteSeriesPreview> previews = seriesPreviews ?? [];
-        Task representativeTask = previews.Count == 0
-            ? Task.CompletedTask
-            : FetchRepresentativeImagesAsync(result.Archive, result.Study.StudyInstanceUid, previews, settings.LocalAeTitle, cancellationToken);
-
         int expectedSeriesCount = previews.Count;
-        StudyDetails? previewReadyStudy = await WaitForLocalStudyAsync(
-            result.Study.StudyInstanceUid,
-            details => details.Series.Count > 0 && details.Series.Count(series => series.Instances.Count > 0) >= Math.Max(1, Math.Min(expectedSeriesCount, 3)),
-            TimeSpan.FromSeconds(18),
-            cancellationToken);
-
-        if (previewReadyStudy is null)
+        int loadedSeriesCount = 0;
+        if (previews.Count > 0)
         {
-            await representativeTask;
+            status?.Report($"Fetching representative preview images for {expectedSeriesCount} series...");
+            loadedSeriesCount = await FetchRepresentativeImagesAsync(
+                result.Archive,
+                result.Study.StudyInstanceUid,
+                previews,
+                settings.LocalAeTitle,
+                RepresentativeImageMoveConcurrency,
+                cancellationToken);
+        }
+
+        StudyDetails? previewReadyStudy = null;
+        if (loadedSeriesCount > 0)
+        {
             previewReadyStudy = await WaitForLocalStudyAsync(
                 result.Study.StudyInstanceUid,
-                details => details.Series.Any(series => series.Instances.Count > 0),
+                details => details.Series.Count > 0 && details.Series.Count(series => series.Instances.Count > 0) >= loadedSeriesCount,
                 TimeSpan.FromSeconds(12),
                 cancellationToken);
         }
+
+        var client = CreateClient(archive);
+        status?.Report($"Representative preview complete ({loadedSeriesCount}/{expectedSeriesCount} series). Continuing full background retrieval from {archive.Name}...");
+        Task<bool> fullFetchTask = client.MoveStudyAsync(result.Study.StudyInstanceUid, settings.LocalAeTitle, cancellationToken: cancellationToken);
 
         _ = ObserveFullFetchAsync(fullFetchTask, archive.Name, result.Study.StudyInstanceUid, status);
         return previewReadyStudy ?? await _repository.GetStudyDetailsByStudyInstanceUidAsync(result.Study.StudyInstanceUid, cancellationToken);
     }
 
-    private async Task FetchRepresentativeImagesAsync(RemoteArchiveEndpoint archive, string studyInstanceUid, IReadOnlyCollection<RemoteSeriesPreview> seriesPreviews, string destinationAe, CancellationToken cancellationToken)
+    private async Task<int> FetchRepresentativeImagesAsync(RemoteArchiveEndpoint archive, string studyInstanceUid, IReadOnlyCollection<RemoteSeriesPreview> seriesPreviews, string destinationAe, int maxConcurrency, CancellationToken cancellationToken)
     {
+        int loadedSeries = 0;
+        using var gate = new SemaphoreSlim(Math.Max(1, maxConcurrency), Math.Max(1, maxConcurrency));
         List<Task> tasks = [];
+
         foreach (RemoteSeriesPreview preview in seriesPreviews)
         {
             ImageInfo? representative = preview.GetRepresentativeImage();
@@ -280,29 +381,210 @@ public sealed class DicomRemoteStudyBrowserService
                 continue;
             }
 
-            tasks.Add(MoveImageAsync(archive, studyInstanceUid, preview.LegacySeries.SerInstUid, representative.SopInstUid, destinationAe, cancellationToken));
+            await gate.WaitAsync(cancellationToken);
+            tasks.Add(Task.Run(async () =>
+            {
+                try
+                {
+                    bool success = await MoveImageAsync(archive, studyInstanceUid, preview.LegacySeries.SerInstUid, representative.SopInstUid, destinationAe, cancellationToken);
+                    if (success)
+                    {
+                        Interlocked.Increment(ref loadedSeries);
+                    }
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            }, cancellationToken));
         }
 
         await Task.WhenAll(tasks);
+        return loadedSeries;
     }
 
     private static async Task<bool> MoveImageAsync(RemoteArchiveEndpoint archive, string studyInstanceUid, string seriesInstanceUid, string sopInstanceUid, string destinationAe, CancellationToken cancellationToken)
     {
         bool success = false;
+        DicomCommunicationTrace.Log("DICOM-SCU", $"[{destinationAe.Trim()} -> {archive.RemoteAeTitle.Trim()} {archive.Host}:{archive.Port}] SEND C-MOVE image dest={destinationAe} [study={studyInstanceUid}, series={seriesInstanceUid}, sopInstance={sopInstanceUid}]");
 
         var client = DicomClientFactory.Create(archive.Host, archive.Port, false, destinationAe, archive.RemoteAeTitle);
         var request = new DicomCMoveRequest(destinationAe, studyInstanceUid, seriesInstanceUid, sopInstanceUid);
         request.OnResponseReceived += (_, response) =>
         {
+            DicomCommunicationTrace.Log("DICOM-SCU", $"[{destinationAe.Trim()} -> {archive.RemoteAeTitle.Trim()} {archive.Host}:{archive.Port}] RECV C-MOVE image status={response.Status} [study={studyInstanceUid}, series={seriesInstanceUid}, sopInstance={sopInstanceUid}]");
             if (response.Status == DicomStatus.Success)
             {
                 success = true;
             }
         };
 
-        await client.AddRequestAsync(request);
-        await client.SendAsync(cancellationToken);
+        try
+        {
+            await client.AddRequestAsync(request);
+            await client.SendAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            DicomCommunicationTrace.LogException("DICOM-SCU", $"[{destinationAe.Trim()} -> {archive.RemoteAeTitle.Trim()} {archive.Host}:{archive.Port}] C-MOVE image failed", ex);
+        }
+
         return success;
+    }
+
+    private async Task ContinuePriorStudyFetchAsync(RemoteStudySearchResult result, StudyDetails previewDetails, Action<StudyDetails> onUpdated, CancellationToken cancellationToken)
+    {
+        try
+        {
+            DicomNetworkSettings settings = _settingsService.CurrentSettings;
+            DicomNetworkClient client = CreateClient(result.Archive);
+            Task<bool> fullFetchTask = client.MoveStudyAsync(result.Study.StudyInstanceUid, settings.LocalAeTitle, cancellationToken: cancellationToken);
+
+            while (!fullFetchTask.IsCompleted)
+            {
+                await Task.Delay(500, cancellationToken);
+                await PublishMergedPreviewUpdateAsync(previewDetails, result.Study.StudyInstanceUid, onUpdated, cancellationToken);
+            }
+
+            await fullFetchTask;
+            await PublishMergedPreviewUpdateAsync(previewDetails, result.Study.StudyInstanceUid, onUpdated, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task PublishMergedPreviewUpdateAsync(StudyDetails previewDetails, string studyInstanceUid, Action<StudyDetails> onUpdated, CancellationToken cancellationToken)
+    {
+        StudyDetails? local = await _repository.GetStudyDetailsByStudyInstanceUidAsync(studyInstanceUid, cancellationToken);
+        if (local is null)
+        {
+            return;
+        }
+
+        StudyDetails merged = CloneStudyDetails(previewDetails);
+        MergeLocalStudyIntoPreview(merged, local);
+        onUpdated(merged);
+    }
+
+    private static bool IsStudyFullyLocal(StudyDetails details)
+    {
+        return details.Series.Count > 0
+            && details.Series.All(series => series.Instances.Count > 0 && series.Instances.All(instance => !string.IsNullOrWhiteSpace(instance.FilePath) && File.Exists(instance.FilePath)));
+    }
+
+    private static void MergeLocalStudyIntoPreview(StudyDetails target, StudyDetails local)
+    {
+        Dictionary<string, SeriesRecord> localSeriesByUid = local.Series.ToDictionary(series => series.SeriesInstanceUid, StringComparer.Ordinal);
+
+        foreach (SeriesRecord targetSeries in target.Series)
+        {
+            if (!localSeriesByUid.TryGetValue(targetSeries.SeriesInstanceUid, out SeriesRecord? localSeries))
+            {
+                continue;
+            }
+
+            Dictionary<string, InstanceRecord> localInstancesByUid = localSeries.Instances.ToDictionary(instance => instance.SopInstanceUid, StringComparer.Ordinal);
+            foreach (InstanceRecord targetInstance in targetSeries.Instances)
+            {
+                if (!localInstancesByUid.TryGetValue(targetInstance.SopInstanceUid, out InstanceRecord? localInstance))
+                {
+                    continue;
+                }
+
+                targetInstance.FilePath = localInstance.FilePath;
+                targetInstance.InstanceNumber = localInstance.InstanceNumber;
+                targetInstance.FrameCount = localInstance.FrameCount;
+                if (!string.IsNullOrWhiteSpace(localInstance.SopClassUid))
+                {
+                    targetInstance.SopClassUid = localInstance.SopClassUid;
+                }
+            }
+
+            foreach (InstanceRecord localInstance in localSeries.Instances)
+            {
+                if (targetSeries.Instances.Any(instance => string.Equals(instance.SopInstanceUid, localInstance.SopInstanceUid, StringComparison.Ordinal)))
+                {
+                    continue;
+                }
+
+                targetSeries.Instances.Add(CloneInstance(localInstance));
+            }
+
+            targetSeries.InstanceCount = Math.Max(targetSeries.InstanceCount, localSeries.InstanceCount);
+            targetSeries.Instances.Sort(static (left, right) =>
+            {
+                int byNumber = left.InstanceNumber.CompareTo(right.InstanceNumber);
+                return byNumber != 0 ? byNumber : string.Compare(left.SopInstanceUid, right.SopInstanceUid, StringComparison.Ordinal);
+            });
+        }
+    }
+
+    private static StudyDetails CloneStudyDetails(StudyDetails source)
+    {
+        var clone = new StudyDetails
+        {
+            Study = new StudyListItem
+            {
+                StudyKey = source.Study.StudyKey,
+                StudyInstanceUid = source.Study.StudyInstanceUid,
+                PatientName = source.Study.PatientName,
+                PatientId = source.Study.PatientId,
+                PatientBirthDate = source.Study.PatientBirthDate,
+                AccessionNumber = source.Study.AccessionNumber,
+                StudyDescription = source.Study.StudyDescription,
+                ReferringPhysician = source.Study.ReferringPhysician,
+                StudyDate = source.Study.StudyDate,
+                Modalities = source.Study.Modalities,
+                SeriesCount = source.Study.SeriesCount,
+                InstanceCount = source.Study.InstanceCount,
+                StoragePath = source.Study.StoragePath,
+                ImportedAtUtc = source.Study.ImportedAtUtc,
+                IsPreviewOnly = source.Study.IsPreviewOnly,
+                PreviewSourcePath = source.Study.PreviewSourcePath,
+            },
+            LegacyStudy = source.LegacyStudy?.Clone(),
+        };
+
+        foreach (SeriesRecord series in source.Series)
+        {
+            var clonedSeries = new SeriesRecord
+            {
+                SeriesKey = series.SeriesKey,
+                StudyKey = series.StudyKey,
+                SeriesInstanceUid = series.SeriesInstanceUid,
+                Modality = series.Modality,
+                SeriesDescription = series.SeriesDescription,
+                SeriesNumber = series.SeriesNumber,
+                InstanceCount = series.InstanceCount,
+            };
+
+            foreach (InstanceRecord instance in series.Instances)
+            {
+                clonedSeries.Instances.Add(CloneInstance(instance));
+            }
+
+            clone.Series.Add(clonedSeries);
+        }
+
+        return clone;
+    }
+
+    private static InstanceRecord CloneInstance(InstanceRecord source)
+    {
+        return new InstanceRecord
+        {
+            InstanceKey = source.InstanceKey,
+            SeriesKey = source.SeriesKey,
+            SopInstanceUid = source.SopInstanceUid,
+            SopClassUid = source.SopClassUid,
+            FilePath = source.FilePath,
+            InstanceNumber = source.InstanceNumber,
+            FrameCount = source.FrameCount,
+        };
     }
 
     private async Task ObserveFullFetchAsync(Task<bool> fullFetchTask, string archiveName, string studyInstanceUid, IProgress<string>? status)
@@ -349,6 +631,7 @@ public sealed class DicomRemoteStudyBrowserService
             LocalAET = settings.LocalAeTitle,
             RemoteAET = archive.RemoteAeTitle,
             ServerAlias = archive.Name,
+            DefaultCharacterSet = DicomFunctions.ApplicationsDefaultCharSet,
         };
     }
 

@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using FellowOakDicom;
+using KPACS.DCMClasses;
 using KPACS.Viewer.Models;
 using KPACS.Viewer.Services;
 using System.Globalization;
@@ -20,6 +21,7 @@ public partial class App : Application
     public NetworkSettingsService NetworkSettingsService { get; private set; } = null!;
     public StorageScpService StorageScpService { get; private set; } = null!;
     public DicomRemoteStudyBrowserService RemoteStudyBrowserService { get; private set; } = null!;
+    public PriorStudyLookupService PriorStudyLookupService { get; private set; } = null!;
 
     public override void Initialize()
     {
@@ -40,10 +42,18 @@ public partial class App : Application
         StudyDeletionService = new DicomStudyDeletionService(Paths, Repository);
         WindowPlacementService = new WindowPlacementService(Path.Combine(Paths.ApplicationDirectory, "window-placement.json"));
         NetworkSettingsService = new NetworkSettingsService(Path.Combine(Paths.ApplicationDirectory, "network-settings.json"), Paths.ApplicationDirectory);
+        DicomCommunicationTrace.Configure(
+            NetworkSettingsService.CurrentSettings.EnableDicomCommunicationLogging,
+            NetworkSettingsService.CurrentSettings.DicomCommunicationLogPath);
         StorageScpService = new StorageScpService(ImportService);
         RemoteStudyBrowserService = new DicomRemoteStudyBrowserService(NetworkSettingsService, Repository);
+        PriorStudyLookupService = new PriorStudyLookupService(Repository, RemoteStudyBrowserService);
         StorageScpService.ApplySettingsAsync(NetworkSettingsService.CurrentSettings).GetAwaiter().GetResult();
-        NetworkSettingsService.SettingsChanged += settings => StorageScpService.ApplySettingsAsync(settings).GetAwaiter().GetResult();
+        NetworkSettingsService.SettingsChanged += settings =>
+        {
+            DicomCommunicationTrace.Configure(settings.EnableDicomCommunicationLogging, settings.DicomCommunicationLogPath);
+            StorageScpService.ApplySettingsAsync(settings).GetAwaiter().GetResult();
+        };
     }
 
     public override void OnFrameworkInitializationCompleted()
