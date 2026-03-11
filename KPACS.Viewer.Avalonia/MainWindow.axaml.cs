@@ -361,7 +361,8 @@ public partial class MainWindow : Window
             _studies.Add(study);
         }
 
-        RestoreStudySelection(previousSelectionIds);
+        bool autoSelectFirstStudy = !(_browserMode == BrowserMode.Filesystem && _filesystemScanInProgress);
+        RestoreStudySelection(previousSelectionIds, autoSelectFirstStudy);
 
         StudySummaryText.Text = _studies.Count == 0
             ? "No studies match the current selection."
@@ -1830,7 +1831,7 @@ public partial class MainWindow : Window
 
     private StudyListItem? GetPrimarySelectedStudy() => GetSelectedStudies().FirstOrDefault();
 
-    private void RestoreStudySelection(IReadOnlyCollection<string> selectionIds)
+    private void RestoreStudySelection(IReadOnlyCollection<string> selectionIds, bool selectFirstIfNoMatch = true)
     {
         if (_studies.Count == 0)
         {
@@ -1842,7 +1843,17 @@ public partial class MainWindow : Window
         List<StudyListItem> matches = _studies.Where(study => selectionIds.Contains(study.SelectionId)).ToList();
         if (matches.Count == 0)
         {
-            StudyGrid.SelectedItem = _studies.FirstOrDefault();
+            if (selectFirstIfNoMatch)
+            {
+                StudyGrid.SelectedItem = _studies.FirstOrDefault();
+            }
+            else
+            {
+                System.Collections.IList? gridSelectedItems = StudyGrid.SelectedItems;
+                gridSelectedItems?.Clear();
+                StudyGrid.SelectedItem = null;
+            }
+
             UpdateStudyActionAvailability();
             return;
         }

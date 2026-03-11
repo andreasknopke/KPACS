@@ -97,7 +97,9 @@ public sealed class DicomFilesystemScanService
 
             var studyLookup = new Dictionary<string, StudyDetails>(StringComparer.Ordinal);
             var seriesLookup = new Dictionary<string, SeriesRecord>(StringComparer.Ordinal);
+            var publishedStudyUids = new HashSet<string>(StringComparer.Ordinal);
             int lastReportedCount = 0;
+            string? previousStudyUid = null;
 
             foreach (string filePath in files)
             {
@@ -127,6 +129,12 @@ public sealed class DicomFilesystemScanService
                     string sopClassUid = dataset.GetSingleValueOrDefault(DicomTag.SOPClassUID, string.Empty);
                     string modality = LegacyStudyInfoMapper.ResolveModality(dataset.GetSingleValueOrDefault(DicomTag.Modality, string.Empty), sopClassUid);
 
+                    if (!string.IsNullOrWhiteSpace(previousStudyUid)
+                        && !string.Equals(previousStudyUid, studyUid, StringComparison.Ordinal))
+                    {
+                        PublishStudy(previousStudyUid, studyLookup, publishedStudyUids, result, progress, filePath);
+                    }
+
                     if (!studyLookup.TryGetValue(studyUid, out StudyDetails? details))
                     {
                         var study = new StudyListItem
@@ -152,8 +160,6 @@ public sealed class DicomFilesystemScanService
                         };
 
                         studyLookup.Add(studyUid, details);
-                        result.Studies.Add(details);
-                        ReportProgress(progress, result, filePath, details, $"Found {result.Studies.Count} studies so far.");
                     }
 
                     if (!seriesLookup.TryGetValue(seriesUid, out SeriesRecord? series))
@@ -191,6 +197,8 @@ public sealed class DicomFilesystemScanService
                                 .OrderBy(candidateModality => candidateModality));
                     }
 
+                    previousStudyUid = studyUid;
+
                     int processedCount = result.ScannedFiles + result.SkippedFiles;
                     if (processedCount - lastReportedCount >= 25)
                     {
@@ -208,6 +216,16 @@ public sealed class DicomFilesystemScanService
                         ReportProgress(progress, result, filePath, null, $"Scanned {result.ScannedFiles} files, skipped {result.SkippedFiles}.");
                     }
                 }
+            }
+
+            if (!string.IsNullOrWhiteSpace(previousStudyUid))
+            {
+                PublishStudy(previousStudyUid, studyLookup, publishedStudyUids, result, progress, sourcePath);
+            }
+
+            foreach (string studyUid in studyLookup.Keys.OrderBy(key => key, StringComparer.Ordinal))
+            {
+                PublishStudy(studyUid, studyLookup, publishedStudyUids, result, progress, sourcePath);
             }
 
             foreach (StudyDetails details in result.Studies)
@@ -258,6 +276,26 @@ public sealed class DicomFilesystemScanService
         });
     }
 
+    private static void PublishStudy(
+        string studyUid,
+        IReadOnlyDictionary<string, StudyDetails> studyLookup,
+        ISet<string> publishedStudyUids,
+        FilesystemScanResult result,
+        IProgress<FilesystemScanProgress>? progress,
+        string currentPath)
+    {
+        if (string.IsNullOrWhiteSpace(studyUid)
+            || publishedStudyUids.Contains(studyUid)
+            || !studyLookup.TryGetValue(studyUid, out StudyDetails? details))
+        {
+            return;
+        }
+
+        result.Studies.Add(details);
+        publishedStudyUids.Add(studyUid);
+        ReportProgress(progress, result, currentPath, details, $"{result.Studies.Count} studies are ready for preview.");
+    }
+
     private static void TraverseDirectoryRecords(DicomDirectoryRecord? record, string baseDirectory, ICollection<string> files)
     {
         while (record is not null)
@@ -293,6 +331,11 @@ public sealed class DicomFilesystemScanService
         return Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
             .Where(path =>
                 !string.Equals(Path.GetFileName(path), "DICOMDIR", StringComparison.OrdinalIgnoreCase)
-                && !path.Contains(Path.DirectorySeparatorChar + ".", StringComparison.Ordinal));
+                && !path.Contains(Path.DirectorySeparatorChar + ".", StringComparison.Ordinal))
+            .OrderByDescending(GetPathDepth)
+            .ThenByDescending(path => path, StringComparer.OrdinalIgnoreCase);
     }
+
+    private static int GetPathDepth(string path) =>
+        path.Count(ch => ch == Path.DirectorySeparatorChar || ch == Path.AltDirectorySeparatorChar);
 }

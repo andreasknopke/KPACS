@@ -40,6 +40,12 @@
                         <Setter Property="Foreground" Value="#FF202020" />
                         <Setter Property="BorderBrush" Value="#FF9E9E9E" />
                 </Style>
+                <Style Selector="DataGridRow">
+                        <Setter Property="Background" Value="#FFF2F2F2" />
+                </Style>
+                <Style Selector="DataGridRow:nth-child(even)">
+                        <Setter Property="Background" Value="#FFEAEAEA" />
+                </Style>
                 <Style Selector="Border.networkInfoCard">
                         <Setter Property="Background" Value="#FFF9FBFD" />
                         <Setter Property="BorderBrush" Value="#FFD5E0E8" />
