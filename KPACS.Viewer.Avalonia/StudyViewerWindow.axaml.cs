@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -184,6 +185,7 @@ public partial class StudyViewerWindow : Window
         // Volume path: if a volume is loaded for this series, use it
         if (slot.Volume is not null)
         {
+            ApplySlotOverlayStudyInfo(slot);
             SliceOrientation orientation = slot.Panel.BoundVolume == slot.Volume
                 ? slot.Panel.VolumeOrientation
                 : SliceOrientation.Axial;
@@ -265,6 +267,27 @@ public partial class StudyViewerWindow : Window
         }
 
         UpdateSecondaryCaptureIndicator(slot);
+    }
+
+    private void ApplySlotOverlayStudyInfo(ViewportSlot slot)
+    {
+        StudyDetails? displayedStudy = _isShowingCurrentStudy ? _context.StudyDetails : _thumbnailStripStudy;
+        if (displayedStudy is null)
+        {
+            return;
+        }
+
+        string modality = !string.IsNullOrWhiteSpace(slot.Series?.Modality)
+            ? slot.Series!.Modality
+            : displayedStudy.Study.Modalities;
+
+        slot.Panel.SetOverlayStudyInfo(
+            displayedStudy.Study.PatientName,
+            displayedStudy.Study.PatientId,
+            displayedStudy.Study.StudyDate,
+            displayedStudy.Study.StudyDescription,
+            displayedStudy.LegacyStudy?.InstitutionName ?? string.Empty,
+            modality);
     }
 
     private void OnViewportPressed(object? sender, PointerPressedEventArgs e)
@@ -1954,6 +1977,23 @@ public partial class StudyViewerWindow : Window
         if (_linkedViewSyncEnabled)
         {
             SynchronizeLinkedViews(_activeSlot);
+        }
+
+        RestartActionToolbarHideTimer();
+    }
+
+    private void OnStudyBrowserClick(object? sender, RoutedEventArgs e)
+    {
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop
+            && desktop.MainWindow is Window browserWindow)
+        {
+            if (browserWindow.WindowState == WindowState.Minimized)
+            {
+                browserWindow.WindowState = WindowState.Normal;
+            }
+
+            browserWindow.Show();
+            browserWindow.Activate();
         }
 
         RestartActionToolbarHideTimer();

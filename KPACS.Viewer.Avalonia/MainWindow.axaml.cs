@@ -1506,7 +1506,7 @@ public partial class MainWindow : Window
                 index + 1);
             viewer.Closed += OnManagedViewerClosed;
             _managedViewerWindows.Add(viewer);
-            viewer.Show(this);
+            viewer.Show();
         }
 
         string statusMessage = priorsAvailable && viewerCount > 1

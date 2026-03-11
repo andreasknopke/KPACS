@@ -214,6 +214,23 @@ public partial class DicomViewPanel : UserControl
         }
     }
 
+    public void SetOverlayStudyInfo(
+        string patientName,
+        string patientId,
+        string studyDate,
+        string studyDescription,
+        string institution,
+        string modality)
+    {
+        _patientName = patientName ?? string.Empty;
+        _patientId = patientId ?? string.Empty;
+        _studyDate = studyDate ?? string.Empty;
+        _studyDescription = studyDescription ?? string.Empty;
+        _institution = institution ?? string.Empty;
+        _modality = modality ?? string.Empty;
+        UpdateOverlay();
+    }
+
     // ==============================================================================================
     // Events
     // ==============================================================================================
@@ -676,13 +693,6 @@ public partial class DicomViewPanel : UserControl
 
         SpatialMetadata = resliced.SpatialMetadata;
         _fileName = SpatialMetadata?.FilePath ?? "";
-        _patientName = "";
-        _patientId = "";
-        _studyDate = "";
-        _studyDescription = "";
-        _institution = "";
-        _modality = "";
-
         // Create or resize the display bitmap if dimensions changed
         if (_displayBitmap is null ||
             _displayBitmap.PixelSize.Width != _imageWidth ||

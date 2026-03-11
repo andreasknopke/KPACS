@@ -125,7 +125,7 @@
                 </Grid>
             </Border>
 
-            <Border x:Name="ActionToolbarBorder"
+                <Border x:Name="ActionToolbarBorder"
                     Background="#EE202020"
                     BorderBrush="#FF4A4A4A"
                     BorderThickness="1"
@@ -138,7 +138,7 @@
                     IsHitTestVisible="False"
                     PointerEntered="OnActionToolbarPointerEntered"
                     PointerExited="OnActionToolbarPointerExited">
-                <Grid ColumnDefinitions="*,*,*,*,*,Auto,Auto" ColumnSpacing="10">
+                <Grid ColumnDefinitions="*,*,*,*,*,Auto,Auto,Auto" ColumnSpacing="10">
                     <ToggleButton x:Name="ActionScrollButton" Classes="actionMode" Content="Scroll/Stack" Click="OnActionScrollClick" />
                     <ToggleButton x:Name="ActionZoomPanButton" Grid.Column="1" Classes="actionMode" Content="Zoom-Pan" Click="OnActionZoomPanClick" />
                     <ToggleButton x:Name="ActionWindowButton" Grid.Column="2" Classes="actionMode" Content="Window" Click="OnActionWindowClick" />
@@ -146,6 +146,7 @@
                     <ToggleButton x:Name="ActionLayoutButton" Grid.Column="4" Classes="actionMode" Content="Layout" Click="OnActionLayoutClick" />
                     <ToggleButton x:Name="LinkedSyncToggleButton" Grid.Column="5" Classes="iconToggle" Content="⛓" IsChecked="True" Click="OnLinkedSyncToggleClick" ToolTip.Tip="Synchronize compatible views in the same 3D space." />
                     <ToggleButton x:Name="OverlayToggleButton" Grid.Column="6" Classes="overlayToggle" Content="Overlay" IsChecked="True" Click="OnOverlayToggleClick" />
+                    <Button x:Name="StudyBrowserButton" Grid.Column="7" Classes="popupAction" Content="Study Browser" Click="OnStudyBrowserClick" ToolTip.Tip="Bring the Study Browser window to the front." />
                 </Grid>
             </Border>
 
