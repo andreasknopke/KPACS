@@ -6,19 +6,37 @@ public static class PostgresConnectionStringResolver
 {
     public static string Resolve(IConfiguration configuration)
     {
-        string? direct = configuration.GetConnectionString("RelayDb");
-        if (!string.IsNullOrWhiteSpace(direct))
-        {
-            return direct;
-        }
-
         string? railwayUrl = configuration["DATABASE_URL"];
         if (!string.IsNullOrWhiteSpace(railwayUrl))
         {
             return ConvertRailwayUrl(railwayUrl);
         }
 
-        throw new InvalidOperationException("No PostgreSQL connection string was configured. Set ConnectionStrings:RelayDb or DATABASE_URL.");
+        string? host = configuration["PGHOST"];
+        string? port = configuration["PGPORT"];
+        string? database = configuration["PGDATABASE"];
+        string? username = configuration["PGUSER"];
+        string? password = configuration["PGPASSWORD"];
+        if (!string.IsNullOrWhiteSpace(host)
+            && !string.IsNullOrWhiteSpace(database)
+            && !string.IsNullOrWhiteSpace(username)
+            && !string.IsNullOrWhiteSpace(password))
+        {
+            return BuildConnectionString(
+                host,
+                int.TryParse(port, out int parsedPort) ? parsedPort : 5432,
+                database,
+                username,
+                password);
+        }
+
+        string? direct = configuration.GetConnectionString("RelayDb");
+        if (!string.IsNullOrWhiteSpace(direct))
+        {
+            return direct;
+        }
+
+        throw new InvalidOperationException("No PostgreSQL connection string was configured. Set DATABASE_URL, PGHOST/PGDATABASE/PGUSER/PGPASSWORD, or ConnectionStrings:RelayDb.");
     }
 
     private static string ConvertRailwayUrl(string databaseUrl)
@@ -34,9 +52,14 @@ public static class PostgresConnectionStringResolver
         string password = userParts.ElementAtOrDefault(1) ?? string.Empty;
         string database = uri.AbsolutePath.Trim('/');
 
+        return BuildConnectionString(uri.Host, uri.Port, database, username, password);
+    }
+
+    private static string BuildConnectionString(string host, int port, string database, string username, string password)
+    {
         var builder = new StringBuilder();
-        builder.Append("Host=").Append(uri.Host).Append(';');
-        builder.Append("Port=").Append(uri.Port).Append(';');
+        builder.Append("Host=").Append(host).Append(';');
+        builder.Append("Port=").Append(port).Append(';');
         builder.Append("Database=").Append(database).Append(';');
         builder.Append("Username=").Append(username).Append(';');
         builder.Append("Password=").Append(password).Append(';');

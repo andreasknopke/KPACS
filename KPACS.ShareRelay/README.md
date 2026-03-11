@@ -32,7 +32,7 @@ Default local connection string:
 
 ### Railway
 
-Railway can provide Postgres through `DATABASE_URL`. This project detects that format automatically and converts it to an `Npgsql` connection string.
+Railway can provide Postgres through `DATABASE_URL`. This project detects that format automatically and converts it to an `Npgsql` connection string. It also supports split Postgres variables like `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD`.
 
 Recommended Railway variables:
 
@@ -67,6 +67,13 @@ This repository is a monorepo. The git root is the `CSharp` folder, so the Railw
 9. Connect the PostgreSQL service so Railway injects `DATABASE_URL` into the relay service.
 10. Redeploy the relay service.
 
+If you see `Failed to connect to 127.0.0.1:5432`, the relay service is not receiving Railway's Postgres variables yet. In Railway, open the relay service, go to `Variables`, and make sure either:
+
+- `DATABASE_URL` is present, or
+- the service has `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD`
+
+If none of those variables exist, the relay cannot reach PostgreSQL and startup will fail.
+
 ### What Railway should show when it works
 
 - Build log runs `dotnet publish KPACS.ShareRelay.csproj -c Release -o /app/publish`
@@ -88,7 +95,7 @@ Use your Railway domain in these checks.
 
 ### Important notes for Railway
 
-- Do not set `ConnectionStrings__RelayDb` when Railway already provides `DATABASE_URL`.
+- Do not set `ConnectionStrings__RelayDb` in Railway unless you are intentionally overriding the managed database connection.
 - The mounted volume is important; otherwise uploaded packages disappear on redeploy.
 - If you change the API key later, update the viewer setup in the Email tab as well.
 - The current prototype stores encrypted package blobs and metadata in Postgres, but it does not yet implement production-grade user authentication.
