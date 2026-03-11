@@ -13,6 +13,7 @@ public partial class App : Application
 {
     public ImageboxPaths Paths { get; private set; } = null!;
     public ImageboxRepository Repository { get; private set; } = null!;
+    public BackgroundJobService BackgroundJobs { get; private set; } = null!;
     public DicomImportService ImportService { get; private set; } = null!;
     public DicomFilesystemScanService FilesystemScanService { get; private set; } = null!;
     public DicomPseudonymizationService PseudonymizationService { get; private set; } = null!;
@@ -36,7 +37,8 @@ public partial class App : Application
         Paths = bootstrap.EnsurePaths();
         Repository = new ImageboxRepository(Paths.DatabasePath);
         Repository.InitializeAsync().GetAwaiter().GetResult();
-        ImportService = new DicomImportService(Paths, Repository);
+        BackgroundJobs = new BackgroundJobService(Paths.ApplicationDirectory);
+        ImportService = new DicomImportService(Paths, Repository, BackgroundJobs);
         FilesystemScanService = new DicomFilesystemScanService();
         PseudonymizationService = new DicomPseudonymizationService(Repository);
         StudyDeletionService = new DicomStudyDeletionService(Paths, Repository);
@@ -46,7 +48,7 @@ public partial class App : Application
             NetworkSettingsService.CurrentSettings.EnableDicomCommunicationLogging,
             NetworkSettingsService.CurrentSettings.DicomCommunicationLogPath);
         StorageScpService = new StorageScpService(ImportService);
-        RemoteStudyBrowserService = new DicomRemoteStudyBrowserService(NetworkSettingsService, Repository);
+        RemoteStudyBrowserService = new DicomRemoteStudyBrowserService(NetworkSettingsService, Repository, BackgroundJobs);
         PriorStudyLookupService = new PriorStudyLookupService(Repository, RemoteStudyBrowserService);
         StorageScpService.ApplySettingsAsync(NetworkSettingsService.CurrentSettings).GetAwaiter().GetResult();
         NetworkSettingsService.SettingsChanged += settings =>

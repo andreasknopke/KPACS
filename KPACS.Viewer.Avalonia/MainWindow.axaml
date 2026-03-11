@@ -237,6 +237,33 @@
                                                                                                         </StackPanel>
                                                                                                 </Border>
                                                                                         </Grid>
+
+                                                                                        <Border Classes="networkInfoCard" Padding="10">
+                                                                                                <StackPanel Spacing="8">
+                                                                                                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                                                                                                <TextBlock Text="Background jobs" FontWeight="SemiBold" Foreground="#FF25343E" VerticalAlignment="Center" />
+                                                                                                                <Button Grid.Column="1" Content="Job log" Click="OnViewBackgroundJobLogClick" />
+                                                                                                                <Button Grid.Column="2" Content="DICOM trace" Click="OnViewDicomTraceLogClick" />
+                                                                                                        </Grid>
+                                                                                                        <TextBlock x:Name="BackgroundJobsSummaryText" Classes="networkCardBody" />
+                                                                                                        <DataGrid x:Name="BackgroundJobsGrid"
+                                                                                                                  AutoGenerateColumns="False"
+                                                                                                                  HeadersVisibility="Column"
+                                                                                                                  CanUserResizeColumns="True"
+                                                                                                                  CanUserSortColumns="True"
+                                                                                                                  IsReadOnly="True"
+                                                                                                                  MinHeight="150"
+                                                                                                                  MaxHeight="190">
+                                                                                                                <DataGrid.Columns>
+                                                                                                                        <DataGridTextColumn Header="Type" Binding="{Binding TypeLabel}" Width="90" />
+                                                                                                                        <DataGridTextColumn Header="Study / Job" Binding="{Binding Title}" Width="2*" />
+                                                                                                                        <DataGridTextColumn Header="State" Binding="{Binding StateLabel}" Width="120" />
+                                                                                                                        <DataGridTextColumn Header="Progress" Binding="{Binding ProgressLabel}" Width="150" />
+                                                                                                                        <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="3*" />
+                                                                                                                </DataGrid.Columns>
+                                                                                                        </DataGrid>
+                                                                                                </StackPanel>
+                                                                                        </Border>
                                                                                 </StackPanel>
                                                                         </Border>
                                                                 </StackPanel>
@@ -273,6 +300,15 @@
                                         <Button x:Name="ViewActionButton" Classes="action" Content="View" Click="OnOpenViewerClick" />
                                         <Button x:Name="SendActionButton" Classes="action" Content="Send" Click="OnSendSelectedClick" />
                                         <Button x:Name="ModifyActionButton" Classes="action" Content="Modify" Click="OnPseudonymizeClick" />
+                                        <StackPanel Spacing="4" Margin="0,8,0,0">
+                                                <TextBlock Text="Viewer windows" Foreground="#FF555555" HorizontalAlignment="Center" />
+                                                <ComboBox x:Name="ViewerWindowCountComboBox" Width="58" HorizontalAlignment="Center" SelectionChanged="OnViewerWindowCountChanged">
+                                                        <ComboBoxItem Content="1" />
+                                                        <ComboBoxItem Content="2" />
+                                                        <ComboBoxItem Content="3" />
+                                                        <ComboBoxItem Content="4" />
+                                                </ComboBox>
+                                        </StackPanel>
                                 </StackPanel>
                         </Border>
 

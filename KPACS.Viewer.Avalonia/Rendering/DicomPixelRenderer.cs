@@ -179,6 +179,77 @@ public static class DicomPixelRenderer
         }
     }
 
+    /// <summary>
+    /// Renders a pre-rescaled 16-bit signed pixel buffer (from <see cref="VolumeReslicer"/>)
+    /// to BGRA32. The values are already rescaled (HU or similar), so no slope/intercept
+    /// is applied — only windowing + color LUT.
+    /// </summary>
+    public static void RenderRescaled16Bit(
+        short[] rescaledPixels,
+        int width, int height,
+        double windowCenter, double windowWidth,
+        byte[] lutR, byte[] lutG, byte[] lutB,
+        bool isMonochrome1,
+        byte[] outputBgra)
+    {
+        int pixelCount = width * height;
+        double wMin = windowCenter - windowWidth / 2.0;
+        double wMax = windowCenter + windowWidth / 2.0;
+
+        // Build a 65536-entry LUT mapping ushort → gray byte.
+        // We reinterpret short → ushort for indexing.
+        byte[] windowLut = new byte[65536];
+        for (int i = 0; i < 65536; i++)
+        {
+            double value = (short)unchecked((ushort)i); // interpret as signed
+            byte gray;
+            if (windowWidth <= 0) gray = 128;
+            else if (value <= wMin) gray = 0;
+            else if (value >= wMax) gray = 255;
+            else gray = (byte)((value - wMin) / windowWidth * 255.0);
+
+            if (isMonochrome1) gray = (byte)(255 - gray);
+            windowLut[i] = gray;
+        }
+
+        int count = Math.Min(rescaledPixels.Length, pixelCount);
+        int dstIdx = 0;
+
+        for (int p = 0; p < count; p++)
+        {
+            byte gray = windowLut[unchecked((ushort)rescaledPixels[p])];
+            outputBgra[dstIdx] = lutB[gray];
+            outputBgra[dstIdx + 1] = lutG[gray];
+            outputBgra[dstIdx + 2] = lutR[gray];
+            outputBgra[dstIdx + 3] = 255;
+            dstIdx += 4;
+        }
+    }
+
+    /// <summary>
+    /// Computes auto window center/width from a rescaled 16-bit signed buffer.
+    /// </summary>
+    public static (double Center, double Width) ComputeAutoWindowRescaled(short[] pixels, int width, int height)
+    {
+        int count = Math.Min(pixels.Length, width * height);
+        if (count == 0)
+            return (0, 1);
+
+        short min = short.MaxValue, max = short.MinValue;
+        int step = count > 500_000 ? count / 200_000 : 1;
+
+        for (int i = 0; i < count; i += step)
+        {
+            short v = pixels[i];
+            if (v < min) min = v;
+            if (v > max) max = v;
+        }
+
+        double center = (min + max) / 2.0;
+        double wid = Math.Max(1, max - min);
+        return (center, wid);
+    }
+
     private static void RenderRgb(
         byte[] rawPixels, int width, int height,
         double windowCenter, double windowWidth,

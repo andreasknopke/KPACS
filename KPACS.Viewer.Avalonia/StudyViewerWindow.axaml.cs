@@ -11,6 +11,7 @@ using Avalonia.Threading;
 using FellowOakDicom;
 using KPACS.Viewer.Controls;
 using KPACS.Viewer.Models;
+using KPACS.Viewer.Rendering;
 using KPACS.Viewer.Services;
 using SpatialVector3D = KPACS.Viewer.Models.Vector3D;
 
@@ -20,8 +21,11 @@ public partial class StudyViewerWindow : Window
 {
     private readonly ViewerStudyContext _context;
     private readonly RemoteStudyRetrievalSession? _remoteRetrievalSession;
+    private readonly bool _startBlank;
+    private readonly int _viewerNumber;
     private readonly List<ViewportSlot> _slots = [];
     private readonly Dictionary<string, DicomSpatialMetadata?> _spatialMetadataCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, SeriesVolume?> _volumeCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ObservableCollection<ToastNotificationItem> _toastNotifications = [];
     private readonly CancellationTokenSource _priorLookupCancellation = new();
     private readonly DispatcherTimer _actionToolbarHideTimer = new();
@@ -37,22 +41,27 @@ public partial class StudyViewerWindow : Window
     private int _selectedColorScheme = (int)ColorScheme.Grayscale;
     private bool _overlayEnabled = true;
     private bool _linkedViewSyncEnabled = true;
+    private bool _isShowingCurrentStudy;
     private bool _isActionToolbarPointerOver;
     private bool _isPriorPreviewLoading;
     private bool _isSynchronizingLinkedViews;
     private string _thumbnailStripMessage = string.Empty;
     private const int AdjacentPriorityDebounceMs = 180;
 
-    public StudyViewerWindow(ViewerStudyContext context)
+    public StudyViewerWindow(ViewerStudyContext context, string placementKey, int viewerNumber)
     {
         InitializeComponent();
         InitializeMeasurementsUi();
         _context = context;
         _remoteRetrievalSession = context.RemoteRetrievalSession;
+        _startBlank = context.StartBlank;
+        _viewerNumber = viewerNumber;
+        _isShowingCurrentStudy = !context.StartBlank;
+        Title = $"K-PACS Viewer {viewerNumber}";
         if (Application.Current is App app)
         {
             _viewerSettingsPath = Path.Combine(app.Paths.ApplicationDirectory, "study-viewer-settings.json");
-            app.WindowPlacementService.Register(this, "StudyViewerWindow");
+            app.WindowPlacementService.Register(this, placementKey);
         }
         LoadViewerSettings();
         if (_remoteRetrievalSession is not null)
@@ -61,8 +70,9 @@ public partial class StudyViewerWindow : Window
         }
         InitializeActionToolbar();
         ToastItemsControl.ItemsSource = _toastNotifications;
+        ViewerIdentityText.Text = $"Viewer {viewerNumber}";
         StudyTitleText.Text = context.StudyDetails.Study.PatientName;
-        StudySubtitleText.Text = $"{context.StudyDetails.Study.StudyDescription}   {context.StudyDetails.Study.StudyDate}   {context.StudyDetails.Study.Modalities}";
+        StudySubtitleText.Text = BuildSubtitle();
         KeyUp += OnWindowKeyUp;
         Deactivated += (_, _) => Clear3DCursor();
         Opened += OnViewerOpened;
@@ -129,7 +139,7 @@ public partial class StudyViewerWindow : Window
             };
             slot.Border = border;
             slot.Panel = panel;
-            slot.Series = index < _context.StudyDetails.Series.Count ? _context.StudyDetails.Series[index] : null;
+            slot.Series = !_startBlank && index < _context.StudyDetails.Series.Count ? _context.StudyDetails.Series[index] : null;
             slot.InstanceIndex = 0;
 
             ConfigureMeasurementPanel(slot, panel);
@@ -171,6 +181,46 @@ public partial class StudyViewerWindow : Window
             return;
         }
 
+        // Volume path: if a volume is loaded for this series, use it
+        if (slot.Volume is not null)
+        {
+            SliceOrientation orientation = slot.Panel.BoundVolume == slot.Volume
+                ? slot.Panel.VolumeOrientation
+                : SliceOrientation.Axial;
+            int sliceCount = VolumeReslicer.GetSliceCount(slot.Volume, orientation);
+            slot.InstanceIndex = Math.Clamp(slot.InstanceIndex, 0, Math.Max(0, sliceCount - 1));
+            slot.Panel.StackItemCount = sliceCount;
+
+            DicomViewPanel.DisplayState? previousState = slot.ViewState;
+            if (slot.Panel.BoundVolume != slot.Volume)
+            {
+                slot.Panel.BindVolume(slot.Volume, orientation, slot.InstanceIndex);
+            }
+            else
+            {
+                slot.Panel.ShowVolumeSlice(slot.InstanceIndex);
+            }
+
+            slot.CurrentSpatialMetadata = slot.Panel.SpatialMetadata;
+            if (slot.CurrentSpatialMetadata?.FilePath is { Length: > 0 } fp)
+                _spatialMetadataCache[fp] = slot.CurrentSpatialMetadata;
+            ApplyMeasurementContext(slot);
+
+            if (previousState is not null)
+                slot.Panel.ApplyDisplayState(previousState);
+            else if (slot.Panel.CurrentColorScheme != _selectedColorScheme)
+                slot.Panel.SetColorScheme(_selectedColorScheme);
+            else if (slot.Panel.IsImageLoaded)
+                slot.ViewState = slot.Panel.CaptureDisplayState();
+
+            if (refreshThumbnailStrip && ReferenceEquals(slot, _activeSlot))
+                RefreshThumbnailStrip(slot.Series);
+
+            UpdateSecondaryCaptureIndicator(slot);
+            return;
+        }
+
+        // Legacy file-based path
         int totalCount = GetSeriesTotalCount(slot.Series);
         slot.InstanceIndex = Math.Clamp(slot.InstanceIndex, 0, Math.Max(0, totalCount - 1));
         slot.Panel.StackItemCount = totalCount;
@@ -190,15 +240,15 @@ public partial class StudyViewerWindow : Window
         }
 
         string filePath = instance.FilePath;
-        DicomViewPanel.DisplayState? previousState = slot.ViewState;
+        DicomViewPanel.DisplayState? legacyPreviousState = slot.ViewState;
         slot.Panel.LoadFile(filePath);
         slot.CurrentSpatialMetadata = slot.Panel.SpatialMetadata;
         _spatialMetadataCache[filePath] = slot.CurrentSpatialMetadata;
         ApplyMeasurementContext(slot);
 
-        if (previousState is not null)
+        if (legacyPreviousState is not null)
         {
-            slot.Panel.ApplyDisplayState(previousState);
+            slot.Panel.ApplyDisplayState(legacyPreviousState);
         }
         else if (slot.Panel.CurrentColorScheme != _selectedColorScheme)
         {
@@ -252,6 +302,12 @@ public partial class StudyViewerWindow : Window
             return;
         }
 
+        if (panel.IsVolumeBound)
+        {
+            slot.InstanceIndex = panel.VolumeSliceIndex;
+            panel.StackItemCount = panel.VolumeSliceCount;
+        }
+
         slot.ViewState = panel.CaptureDisplayState();
         if (_isSynchronizingLinkedViews)
         {
@@ -290,8 +346,12 @@ public partial class StudyViewerWindow : Window
             SetActiveSlot(slot, requestPriority: false);
         }
 
-        slot.InstanceIndex = Math.Clamp(slot.InstanceIndex + delta, 0, GetSeriesTotalCount(slot.Series) - 1);
-        RequestSlotPriority(slot, Math.Sign(delta));
+        int maxIndex = slot.Volume is not null
+            ? Math.Max(0, slot.Panel.VolumeSliceCount - 1)
+            : GetSeriesTotalCount(slot.Series) - 1;
+        slot.InstanceIndex = Math.Clamp(slot.InstanceIndex + delta, 0, maxIndex);
+        if (slot.Volume is null)
+            RequestSlotPriority(slot, Math.Sign(delta));
         LoadSlot(slot, refreshThumbnailStrip: false);
         UpdateStatus();
     }
@@ -335,8 +395,12 @@ public partial class StudyViewerWindow : Window
             return;
         }
 
-        _activeSlot.InstanceIndex = Math.Clamp(_activeSlot.InstanceIndex + delta, 0, GetSeriesTotalCount(_activeSlot.Series) - 1);
-        RequestSlotPriority(_activeSlot, Math.Sign(delta));
+        int maxIndex = _activeSlot.Volume is not null
+            ? Math.Max(0, _activeSlot.Panel.VolumeSliceCount - 1)
+            : GetSeriesTotalCount(_activeSlot.Series) - 1;
+        _activeSlot.InstanceIndex = Math.Clamp(_activeSlot.InstanceIndex + delta, 0, maxIndex);
+        if (_activeSlot.Volume is null)
+            RequestSlotPriority(_activeSlot, Math.Sign(delta));
         LoadSlot(_activeSlot, refreshThumbnailStrip: false);
         UpdateStatus();
     }
@@ -379,10 +443,95 @@ public partial class StudyViewerWindow : Window
         {
             _remoteRetrievalSession?.StartBackgroundRetrieval();
         }
+
+        // Load volumes in the background for all visible slots
+        if (_isShowingCurrentStudy)
+        {
+            _ = LoadVolumesForSlotsAsync();
+        }
+    }
+
+    private async Task LoadVolumesForSlotsAsync()
+    {
+        var volumeLoader = new VolumeLoaderService();
+        var slotsToLoad = _slots
+            .Where(s => s.Series is not null && s.Volume is null)
+            .ToList();
+
+        foreach (var slot in slotsToLoad)
+        {
+            if (slot.Series is null)
+                continue;
+
+            string seriesUid = slot.Series.SeriesInstanceUid;
+
+            // Check cache first
+            if (_volumeCache.TryGetValue(seriesUid, out var cachedVolume))
+            {
+                if (cachedVolume is not null)
+                {
+                    await Dispatcher.UIThread.InvokeAsync(() => ApplyVolumeToSlot(slot, cachedVolume));
+                }
+                continue;
+            }
+
+            try
+            {
+                var volume = await volumeLoader.TryLoadVolumeAsync(slot.Series);
+                _volumeCache[seriesUid] = volume;
+
+                if (volume is not null)
+                {
+                    await Dispatcher.UIThread.InvokeAsync(() => ApplyVolumeToSlot(slot, volume));
+                }
+            }
+            catch
+            {
+                _volumeCache[seriesUid] = null;
+            }
+        }
+    }
+
+    private void ApplyVolumeToSlot(ViewportSlot slot, SeriesVolume volume)
+    {
+        // Preserve current view state and approximate slice position
+        var viewState = slot.Panel.IsImageLoaded ? slot.Panel.CaptureDisplayState() : null;
+        int previousIndex = slot.InstanceIndex;
+
+        slot.Volume = volume;
+
+        // Map the file-based instance index to the closest volume slice index
+        int sliceCount = VolumeReslicer.GetSliceCount(volume, SliceOrientation.Axial);
+        int totalInstances = slot.Series?.Instances.Count ?? 1;
+        int mappedIndex = totalInstances > 1
+            ? (int)((long)previousIndex * (sliceCount - 1) / (totalInstances - 1))
+            : sliceCount / 2;
+        slot.InstanceIndex = Math.Clamp(mappedIndex, 0, sliceCount - 1);
+
+        LoadSlot(slot, refreshThumbnailStrip: ReferenceEquals(slot, _activeSlot));
+
+        if (viewState is not null)
+            slot.Panel.ApplyDisplayState(viewState);
+
+        UpdateStatus();
     }
 
     private async Task LoadPriorStudiesAsync()
     {
+        if (_context.InitialPriorStudies is not null)
+        {
+            UpdatePriorStudies(_context.InitialPriorStudies);
+            if (_startBlank)
+            {
+                _thumbnailStripMessage = _context.InitialPriorStudies.Count == 0
+                    ? "No prior studies are available. Select the current study thumbnails to populate this viewer."
+                    : "Select the current study or one of the prior-study chips to populate this viewer.";
+                RefreshThumbnailStrip(null);
+            }
+
+            return;
+        }
+
         if (_context.LoadPriorStudiesAsync is null)
         {
             UpdatePriorStudies(Array.Empty<PriorStudySummary>());
@@ -433,8 +582,8 @@ public partial class StudyViewerWindow : Window
     {
         ThumbnailStripPanel.Children.Clear();
 
-        StudyDetails? thumbnailStudy = _selectedPriorStudy is null ? _context.StudyDetails : _thumbnailStripStudy;
-        bool showingCurrentStudy = _selectedPriorStudy is null;
+        StudyDetails? thumbnailStudy = _isShowingCurrentStudy ? _context.StudyDetails : _thumbnailStripStudy;
+        bool showingCurrentStudy = _isShowingCurrentStudy;
 
         if (thumbnailStudy is null)
         {
@@ -563,9 +712,9 @@ public partial class StudyViewerWindow : Window
         }
 
         PriorStudiesPanel.Children.Add(CreateChipButton(
-            label: _selectedPriorStudy is null ? "Current study" : "Back to current",
-            toolTip: "Show the current study thumbnails.",
-            isSelected: _selectedPriorStudy is null,
+            label: _isShowingCurrentStudy ? "Current study" : "Load current study",
+            toolTip: "Show and load the current study in this viewer.",
+            isSelected: _isShowingCurrentStudy,
             isRemote: false,
             isLoading: false,
             onClick: (_, _) => ShowCurrentStudyThumbnails()));
@@ -629,14 +778,17 @@ public partial class StudyViewerWindow : Window
     private void ShowCurrentStudyThumbnails()
     {
         CancelPriorPreviewLoad();
+        _isShowingCurrentStudy = true;
         _selectedPriorStudy = null;
         _thumbnailStripStudy = null;
         _thumbnailStripMessage = string.Empty;
         _isPriorPreviewLoading = false;
         _remoteRetrievalSession?.StartBackgroundRetrieval();
+        LoadStudyIntoSlots(_context.StudyDetails);
         RenderPriorStudyChips();
         RefreshThumbnailStrip(_activeSlot?.Series);
         RequestSlotPriority(_activeSlot);
+        StudySubtitleText.Text = BuildSubtitle();
     }
 
     private async Task ShowPriorStudyThumbnailsAsync(PriorStudySummary priorStudy)
@@ -648,6 +800,7 @@ public partial class StudyViewerWindow : Window
 
         CancelPriorPreviewLoad();
         _remoteRetrievalSession?.StartBackgroundRetrieval();
+        _isShowingCurrentStudy = false;
         _selectedPriorStudy = priorStudy;
         _thumbnailStripStudy = null;
         _isPriorPreviewLoading = true;
@@ -656,6 +809,7 @@ public partial class StudyViewerWindow : Window
             : "Loading prior previews…";
         RenderPriorStudyChips();
         RefreshThumbnailStrip(null);
+        StudySubtitleText.Text = BuildSubtitle();
 
         _priorPreviewCancellation = CancellationTokenSource.CreateLinkedTokenSource(_priorLookupCancellation.Token);
         try
@@ -687,6 +841,7 @@ public partial class StudyViewerWindow : Window
                 }
 
                 RenderPriorStudyChips();
+                StudySubtitleText.Text = BuildSubtitle();
             }
         }
         catch (OperationCanceledException)
@@ -700,9 +855,43 @@ public partial class StudyViewerWindow : Window
                 _thumbnailStripMessage = $"Prior preview failed: {ex.Message}";
                 RefreshThumbnailStrip(null);
                 RenderPriorStudyChips();
+                StudySubtitleText.Text = BuildSubtitle();
                 ShowToast(_thumbnailStripMessage, ToastSeverity.Warning, TimeSpan.FromSeconds(6));
             }
         }
+    }
+
+    private void LoadStudyIntoSlots(StudyDetails study)
+    {
+        for (int index = 0; index < _slots.Count; index++)
+        {
+            ViewportSlot slot = _slots[index];
+            slot.Series = index < study.Series.Count ? study.Series[index] : null;
+            slot.Volume = slot.Series is not null && _volumeCache.TryGetValue(slot.Series.SeriesInstanceUid, out var vol) ? vol : null;
+            slot.InstanceIndex = 0;
+            slot.ViewState = null;
+            LoadSlot(slot, refreshThumbnailStrip: false);
+        }
+
+        SetActiveSlot(_slots.FirstOrDefault());
+        SynchronizeLinkedViews(_activeSlot);
+        UpdateStatus();
+    }
+
+    private string BuildSubtitle()
+    {
+        string baseSubtitle = $"{_context.StudyDetails.Study.StudyDescription}   {_context.StudyDetails.Study.StudyDate}   {_context.StudyDetails.Study.Modalities}".Trim();
+        if (_isShowingCurrentStudy)
+        {
+            return $"Viewer {_viewerNumber}   {baseSubtitle}".Trim();
+        }
+
+        if (_selectedPriorStudy is not null)
+        {
+            return $"Viewer {_viewerNumber}   Comparison mode   {_selectedPriorStudy.DisplayLabel}";
+        }
+
+        return $"Viewer {_viewerNumber}   Ready for comparison";
     }
 
     private void CancelPriorPreviewLoad()
@@ -739,8 +928,12 @@ public partial class StudyViewerWindow : Window
         }
 
         _activeSlot.Series = series;
-        _activeSlot.InstanceIndex = GetRepresentativeInstanceIndex(series);
-        RequestSeriesPriority(series, _activeSlot.InstanceIndex);
+        _activeSlot.Volume = _volumeCache.TryGetValue(series.SeriesInstanceUid, out var vol) ? vol : null;
+        _activeSlot.InstanceIndex = _activeSlot.Volume is not null
+            ? VolumeReslicer.GetSliceCount(_activeSlot.Volume, SliceOrientation.Axial) / 2
+            : GetRepresentativeInstanceIndex(series);
+        if (_activeSlot.Volume is null)
+            RequestSeriesPriority(series, _activeSlot.InstanceIndex);
         LoadSlot(_activeSlot);
         UpdateStatus();
     }
@@ -841,9 +1034,13 @@ public partial class StudyViewerWindow : Window
     private void AssignSeriesToSlot(ViewportSlot slot, SeriesRecord series)
     {
         slot.Series = series;
-        slot.InstanceIndex = GetRepresentativeInstanceIndex(series);
+        slot.Volume = _volumeCache.TryGetValue(series.SeriesInstanceUid, out var vol) ? vol : null;
+        slot.InstanceIndex = slot.Volume is not null
+            ? VolumeReslicer.GetSliceCount(slot.Volume, SliceOrientation.Axial) / 2
+            : GetRepresentativeInstanceIndex(series);
         slot.ViewState = null;
-        RequestSeriesPriority(series, slot.InstanceIndex);
+        if (slot.Volume is null)
+            RequestSeriesPriority(series, slot.InstanceIndex);
         LoadSlot(slot);
         SynchronizeLinkedViews(_activeSlot ?? slot);
         UpdateStatus();
@@ -1214,7 +1411,11 @@ public partial class StudyViewerWindow : Window
                 ? $"   Loaded {loaded}/{total}"
                 : $"   Retrieving image {slot.InstanceIndex + 1}... ({loaded}/{total} local)";
 
-        return $"{slot.Series.Modality}   Series {slot.Series.SeriesNumber}   Image {slot.InstanceIndex + 1}/{total}   {toolText}   {measurementText}{retrievalText}   {cursorText}";
+        string projectionText = slot.Panel.IsVolumeBound
+            ? $"   {slot.Panel.OrientationLabel}   {slot.Panel.ProjectionModeLabel} {slot.Panel.ProjectionThicknessMm:F1} mm"
+            : string.Empty;
+
+        return $"{slot.Series.Modality}   Series {slot.Series.SeriesNumber}   Image {slot.InstanceIndex + 1}/{total}{projectionText}   {toolText}   {measurementText}{retrievalText}   {cursorText}";
     }
 
     private void RequestSlotPriority(ViewportSlot? slot, int direction = 0)
@@ -1815,6 +2016,7 @@ public partial class StudyViewerWindow : Window
         public DicomViewPanel.DisplayState? ViewState { get; set; }
         public DicomSpatialMetadata? CurrentSpatialMetadata { get; set; }
         public bool IsDropTarget { get; set; }
+        public SeriesVolume? Volume { get; set; }
     }
 
     private sealed record SliceProjection(int InstanceIndex, Point ImagePoint, double DistanceToPlane, bool ContainsImagePoint);

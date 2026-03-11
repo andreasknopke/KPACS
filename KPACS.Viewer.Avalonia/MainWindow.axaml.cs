@@ -34,6 +34,7 @@ public partial class MainWindow : Window
     private Dictionary<string, StudyDetails> _networkPreviewDetails = new(StringComparer.Ordinal);
     private Dictionary<string, List<RemoteSeriesPreview>> _networkSeriesPreviews = new(StringComparer.Ordinal);
     private readonly ObservableCollection<StudyListItem> _studies = [];
+    private readonly ObservableCollection<BackgroundJobRow> _backgroundJobs = [];
     private readonly ObservableCollection<PatientRow> _patients = [];
     private readonly ObservableCollection<SeriesGridRow> _seriesRows = [];
     private readonly ObservableCollection<FilesystemFolderNode> _filesystemRoots = [];
@@ -47,6 +48,8 @@ public partial class MainWindow : Window
     private int _networkInfoRefreshVersion;
     private double _patientPaneWidth = DefaultPatientPaneWidth;
     private double _seriesPaneHeight = DefaultSeriesPaneHeight;
+    private int _viewerWindowCount = 1;
+    private readonly List<StudyViewerWindow> _managedViewerWindows = [];
 
     public MainWindow(App app)
     {
@@ -59,9 +62,11 @@ public partial class MainWindow : Window
         PatientGrid.ItemsSource = _patients;
         StudyGrid.ItemsSource = _studies;
         SeriesGrid.ItemsSource = _seriesRows;
+        BackgroundJobsGrid.ItemsSource = _backgroundJobs;
         FilesystemTreeView.ItemsSource = _filesystemRoots;
         ToastItemsControl.ItemsSource = _toastNotifications;
         _uiReady = true;
+        _app.BackgroundJobs.JobsChanged += OnBackgroundJobsChanged;
         _app.StorageScpService.StatusChanged += OnStorageScpStatusChanged;
         _app.NetworkSettingsService.SettingsChanged += OnNetworkSettingsChanged;
         Closed += OnMainWindowClosed;
@@ -71,6 +76,7 @@ public partial class MainWindow : Window
     private async Task InitializeAsync()
     {
         BrowserModeTabs.SelectedIndex = GetBrowserModeTabIndex(_browserMode);
+        ViewerWindowCountComboBox.SelectedIndex = Math.Clamp(_viewerWindowCount, 1, 4) - 1;
         _ = RefreshNetworkInfoPanelAsync();
         UpdateModeUi();
 
@@ -79,6 +85,7 @@ public partial class MainWindow : Window
             await EnsureFilesystemRootLoadedAsync();
         }
 
+        RefreshBackgroundJobsPanel();
         await RefreshCurrentModeAsync();
     }
 
@@ -110,7 +117,7 @@ public partial class MainWindow : Window
         DatabaseStatsText.Text = $"{_allStudies.Count} studies indexed in SQLite.";
         StatusText.Text = statusOverride ?? (_allStudies.Count == 0
             ? "K-PACS imagebox ready — switch to Filesystem mode to scan media before importing."
-            : $"Loaded {_allStudies.Count} studies from the K-PACS imagebox.");
+            : $"Loaded {_allStudies.Count} studies from the K-PACS imagebox and filesystem index.");
     }
 
     private void LoadFilesystemPreviewStudies(string? statusOverride, bool applySearchFilters)
@@ -134,7 +141,7 @@ public partial class MainWindow : Window
         StatusText.Text = statusOverride ?? (_filesystemPreviewDetails.Count == 0
             ? "Expand Computer, choose a drive or folder, then right-click it and select Scan folder."
             : applySearchFilters
-                ? "Filesystem scan loaded. Studies are preview-only until you import or view them."
+                ? "Filesystem scan loaded. Studies open immediately and are copied into the local imagebox in the background."
                 : "Filesystem scan loaded. Fresh scan results are shown without applying the search filter yet.");
     }
 
@@ -359,7 +366,7 @@ public partial class MainWindow : Window
         StudySummaryText.Text = _studies.Count == 0
             ? "No studies match the current selection."
             : _browserMode == BrowserMode.Filesystem
-                ? $"{_studies.Count} preview studies match the current filter. Double-click to import and open."
+                ? $"{_studies.Count} filesystem studies match the current filter. Double-click to open immediately while the local copy continues in the background."
                 : _browserMode == BrowserMode.Network
                     ? _showPatientPanel
                         ? $"{_studies.Count} remote studies for the selected patient. Double-click to retrieve and open."
@@ -453,12 +460,13 @@ public partial class MainWindow : Window
         }
 
         StudyListItem selectedStudy = selectedStudies[0];
+        CloseManagedViewerWindows();
 
         RemoteStudyRetrievalSession? retrievalSession = null;
         StudyDetails? details = _browserMode switch
         {
             BrowserMode.Database => await _app.Repository.GetStudyDetailsAsync(selectedStudy.StudyKey),
-            BrowserMode.Filesystem => await ImportPreviewStudyAsync(selectedStudy),
+            BrowserMode.Filesystem => _filesystemPreviewDetails.GetValueOrDefault(selectedStudy.StudyInstanceUid),
             BrowserMode.Network => await RetrieveNetworkStudyAsync(selectedStudy),
             BrowserMode.Email => null,
             _ => null,
@@ -481,6 +489,18 @@ public partial class MainWindow : Window
                 ShowToast("Selected study could not be loaded from SQLite.", ToastSeverity.Error);
             }
             return;
+        }
+
+        if ((_browserMode == BrowserMode.Database || _browserMode == BrowserMode.Filesystem)
+            && details.Study.Availability != StudyAvailability.Imported)
+        {
+            bool queued = await _app.ImportService.QueueStudyImportAsync(details);
+            if (queued)
+            {
+                string queueMessage = $"Opening {selectedStudy.PatientName}. Files are being copied into the local imagebox in the background.";
+                SetStatus(queueMessage);
+                ShowToast(queueMessage, ToastSeverity.Info, TimeSpan.FromSeconds(6));
+            }
         }
 
         if (_browserMode == BrowserMode.Network)
@@ -517,16 +537,8 @@ public partial class MainWindow : Window
             ? PriorStudyLookupMode.RemoteArchive
             : PriorStudyLookupMode.LocalRepository;
 
-        var viewer = new StudyViewerWindow(new ViewerStudyContext
-        {
-            StudyDetails = details,
-            RemoteRetrievalSession = retrievalSession,
-            LoadPriorStudiesAsync = cancellationToken => _app.PriorStudyLookupService.FindPriorStudiesAsync(details.Study, priorLookupMode, cancellationToken),
-            LoadPriorStudyPreviewAsync = (priorStudy, onUpdated, cancellationToken) => _app.PriorStudyLookupService.LoadPriorStudyPreviewAsync(priorStudy, onUpdated, cancellationToken),
-            LayoutRows = 1,
-            LayoutColumns = 1,
-        });
-        viewer.Show(this);
+        IReadOnlyList<PriorStudySummary> priorStudies = await _app.PriorStudyLookupService.FindPriorStudiesAsync(details.Study, priorLookupMode, CancellationToken.None);
+        OpenStudyInViewerWindows(details, retrievalSession, priorLookupMode, priorStudies);
     }
 
     private async Task<StudyDetails?> EnsureNetworkPreviewLoadedAsync(StudyListItem selectedStudy)
@@ -597,24 +609,24 @@ public partial class MainWindow : Window
             return null;
         }
 
-        ShowToast($"Importing preview study {selectedStudy.PatientName} into the local database...", ToastSeverity.Info, TimeSpan.FromSeconds(5));
-        ImportResult result = await _app.ImportService.ImportStudyAsync(previewDetails);
-        string summary = string.Join("  ", result.Messages.Where(message => !string.IsNullOrWhiteSpace(message)));
-        StudyDetails? importedDetails = await _app.Repository.GetStudyDetailsByStudyInstanceUidAsync(selectedStudy.StudyInstanceUid);
-        if (importedDetails is null)
+        bool queued = await _app.ImportService.QueueStudyImportAsync(previewDetails);
+        if (!queued)
         {
-            SetStatus(string.IsNullOrWhiteSpace(summary)
-                ? "Study import finished, but the imported study could not be loaded from SQLite."
-                : summary);
-            ShowToast("Study import finished, but the imported study could not be loaded from SQLite.", ToastSeverity.Warning, TimeSpan.FromSeconds(7));
-            return null;
+            if (previewDetails.Study.Availability == StudyAvailability.Imported)
+            {
+                SetStatus($"Study {selectedStudy.PatientName} is already available in the local imagebox.");
+                ShowToast($"Study {selectedStudy.PatientName} is already available in the local imagebox.", ToastSeverity.Info, TimeSpan.FromSeconds(5));
+                return previewDetails;
+            }
+
+            SetStatus($"Study {selectedStudy.PatientName} is already queued for background import.");
+            ShowToast($"Study {selectedStudy.PatientName} is already queued for background import.", ToastSeverity.Info, TimeSpan.FromSeconds(5));
+            return previewDetails;
         }
 
-        SetStatus(string.IsNullOrWhiteSpace(summary)
-            ? $"Imported study {selectedStudy.PatientName} into the local database."
-            : summary);
-        ShowToast($"Imported study {selectedStudy.PatientName} into the local database.", ToastSeverity.Success);
-        return importedDetails;
+        SetStatus($"Study {selectedStudy.PatientName} is being copied into the local imagebox in the background.");
+        ShowToast($"Study {selectedStudy.PatientName} is being copied into the local imagebox in the background.", ToastSeverity.Info, TimeSpan.FromSeconds(6));
+        return previewDetails;
     }
 
     private async void OnSearchClick(object? sender, RoutedEventArgs e) => await RefreshCurrentModeAsync(userInitiated: true);
@@ -808,51 +820,31 @@ public partial class MainWindow : Window
             }
 
             int totalFiles = studiesToSend.Sum(item => item.LocalFiles);
-            int completedOverall = 0;
-            int successfulStudies = 0;
             string studyLabel = _browserMode == BrowserMode.Filesystem ? "preview" : "local";
+            int queuedStudies = 0;
 
-            ShowToast($"Sending {studiesToSend.Count} {studyLabel} studies to archive {archive.Name} ({totalFiles} images).", ToastSeverity.Info, TimeSpan.FromSeconds(6));
-
-            foreach ((StudyListItem study, StudyDetails details, int localFiles) in studiesToSend)
+            foreach ((StudyListItem _, StudyDetails details, int _) in studiesToSend)
             {
-                int studyCompleted = 0;
-                var progress = new Progress<(int completed, int total)>(update =>
+                bool queued = await _app.RemoteStudyBrowserService.QueueSendStudyAsync(details, CancellationToken.None);
+                if (queued)
                 {
-                    studyCompleted = update.completed;
-                    SetStatus($"Sending {study.PatientName} to {archive.Name}: {completedOverall + update.completed}/{totalFiles} images sent...");
-                });
-
-                try
-                {
-                    bool success = await _app.RemoteStudyBrowserService.SendStudyAsync(details, progress, CancellationToken.None);
-                    completedOverall += Math.Max(studyCompleted, localFiles);
-                    if (success)
-                    {
-                        successfulStudies++;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    completedOverall += Math.Max(studyCompleted, localFiles);
-                    ShowToast($"Send failed for {study.PatientName}: {ex.Message}", ToastSeverity.Error, TimeSpan.FromSeconds(8));
+                    queuedStudies++;
                 }
             }
 
-            if (successfulStudies == studiesToSend.Count)
+            if (queuedStudies == 0)
             {
-                string completionMessage = studiesToSend.Count == 1
-                    ? $"Sent study {studiesToSend[0].Study.PatientName} to {archive.Name}."
-                    : $"Sent {successfulStudies} studies to {archive.Name}.";
-                SetStatus(completionMessage);
-                ShowToast(completionMessage, ToastSeverity.Success, TimeSpan.FromSeconds(6));
+                SetStatus($"The selected {studyLabel} studies are already queued for sending to {archive.Name}.");
+                ShowToast($"The selected {studyLabel} studies are already queued for sending to {archive.Name}.", ToastSeverity.Info, TimeSpan.FromSeconds(6));
+                return;
             }
-            else
-            {
-                string partialMessage = $"Sent {successfulStudies}/{studiesToSend.Count} selected studies to {archive.Name}.";
-                SetStatus(partialMessage);
-                ShowToast(partialMessage, ToastSeverity.Warning, TimeSpan.FromSeconds(7));
-            }
+
+            string queueMessage = queuedStudies == 1
+                ? $"Queued 1 {studyLabel} study for background send to {archive.Name} ({totalFiles} images)."
+                : $"Queued {queuedStudies} {studyLabel} studies for background send to {archive.Name} ({totalFiles} images).";
+            SetStatus(queueMessage);
+            ShowToast(queueMessage, ToastSeverity.Info, TimeSpan.FromSeconds(6));
+            RefreshBackgroundJobsPanel();
         }
         catch (Exception ex)
         {
@@ -934,21 +926,22 @@ public partial class MainWindow : Window
         {
             var progress = new Progress<FilesystemScanProgress>(UpdateFilesystemScanProgress);
             FilesystemScanResult scanResult = await _app.FilesystemScanService.ScanPathAsync(folderPath, preferDicomDir, progress);
+            List<StudyDetails> indexedStudies = await _app.ImportService.IndexFilesystemStudiesAsync(scanResult.Studies, folderPath);
 
             _lastScannedFolderPath = folderPath;
             _lastScanPreferDicomDir = preferDicomDir;
-            _filesystemPreviewDetails = scanResult.Studies.ToDictionary(study => study.Study.StudyInstanceUid, StringComparer.Ordinal);
-            _filesystemScannedStudies = scanResult.Studies.Select(study => study.Study).ToList();
+            _filesystemPreviewDetails = indexedStudies.ToDictionary(study => study.Study.StudyInstanceUid, StringComparer.Ordinal);
+            _filesystemScannedStudies = indexedStudies.Select(study => study.Study).ToList();
 
             string summary = string.Join("  ", scanResult.Messages.Where(message => !string.IsNullOrWhiteSpace(message)));
             string statusMessage = string.IsNullOrWhiteSpace(summary)
-                ? $"Scanned folder {folderPath}. {_filesystemPreviewDetails.Count} studies available for preview."
+                ? $"Scanned folder {folderPath}. {_filesystemPreviewDetails.Count} studies available and indexed in SQLite."
                 : summary;
 
             FinishFilesystemScan(statusMessage);
             ShowToast(_filesystemPreviewDetails.Count == 0
                 ? $"Scan finished for {folderPath}, but no DICOM studies were found."
-                : $"Scan finished for {folderPath}. {_filesystemPreviewDetails.Count} studies are ready for preview.", _filesystemPreviewDetails.Count == 0 ? ToastSeverity.Warning : ToastSeverity.Success, TimeSpan.FromSeconds(6));
+                : $"Scan finished for {folderPath}. {_filesystemPreviewDetails.Count} studies are ready and indexed in SQLite.", _filesystemPreviewDetails.Count == 0 ? ToastSeverity.Warning : ToastSeverity.Success, TimeSpan.FromSeconds(6));
 
             await RefreshCurrentModeAsync(statusMessage, applySearchFilters: false);
         }
@@ -1230,6 +1223,29 @@ public partial class MainWindow : Window
         await LoadSelectedStudyDetailsAsync();
     }
 
+    private void OnBackgroundJobsChanged()
+    {
+        Dispatcher.UIThread.Post(RefreshBackgroundJobsPanel);
+    }
+
+    private async void OnViewerWindowCountChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (!_uiReady || ViewerWindowCountComboBox.SelectedIndex < 0)
+        {
+            return;
+        }
+
+        _viewerWindowCount = Math.Clamp(ViewerWindowCountComboBox.SelectedIndex + 1, 1, 4);
+        SaveBrowserLayoutSettings();
+
+        if (_managedViewerWindows.Count == 0)
+        {
+            return;
+        }
+
+        await OpenSelectedStudyAsync();
+    }
+
     private void OnStorageScpStatusChanged()
     {
         Dispatcher.UIThread.Post(() =>
@@ -1274,9 +1290,11 @@ public partial class MainWindow : Window
 
     private void OnMainWindowClosed(object? sender, EventArgs e)
     {
+        CloseManagedViewerWindows();
         CapturePatientPaneWidth();
         CaptureSeriesPaneHeight();
         SaveBrowserLayoutSettings();
+        _app.BackgroundJobs.JobsChanged -= OnBackgroundJobsChanged;
         _app.StorageScpService.StatusChanged -= OnStorageScpStatusChanged;
         _app.NetworkSettingsService.SettingsChanged -= OnNetworkSettingsChanged;
         Closed -= OnMainWindowClosed;
@@ -1398,7 +1416,127 @@ public partial class MainWindow : Window
 
     private void UpdateNetworkSetupSummary()
     {
+        RefreshBackgroundJobsPanel();
         _ = RefreshNetworkInfoPanelAsync();
+    }
+
+    private void RefreshBackgroundJobsPanel()
+    {
+        if (BackgroundJobsSummaryText is null || BackgroundJobsGrid is null)
+        {
+            return;
+        }
+
+        IReadOnlyList<BackgroundJobInfo> jobs = _app.BackgroundJobs.GetJobsSnapshot();
+        List<BackgroundJobInfo> recentJobs = jobs.Take(12).ToList();
+
+        _backgroundJobs.Clear();
+        foreach (BackgroundJobInfo job in recentJobs)
+        {
+            _backgroundJobs.Add(new BackgroundJobRow
+            {
+                JobId = job.JobId,
+                TypeLabel = job.JobType == BackgroundJobType.Import ? "Import" : "Send",
+                Title = string.IsNullOrWhiteSpace(job.Title) ? job.Key : job.Title,
+                StateLabel = job.State.ToString(),
+                ProgressLabel = job.TotalUnits > 0 ? $"{job.CompletedUnits}/{job.TotalUnits}" : "-",
+                StatusText = job.StatusText,
+            });
+        }
+
+        int activeJobs = jobs.Count(job => job.State is BackgroundJobState.Queued or BackgroundJobState.Running);
+        int failedJobs = jobs.Count(job => job.State == BackgroundJobState.Failed);
+        BackgroundJobsSummaryText.Text = jobs.Count == 0
+            ? "No background import or send jobs have been queued yet."
+            : failedJobs > 0
+                ? $"{activeJobs} active jobs, {failedJobs} failed jobs. Select a row to inspect its log."
+                : $"{activeJobs} active jobs. Select a row to inspect its log or open the DICOM trace.";
+    }
+
+    private async void OnViewBackgroundJobLogClick(object? sender, RoutedEventArgs e)
+    {
+        BackgroundJobRow? selectedRow = BackgroundJobsGrid?.SelectedItem as BackgroundJobRow
+            ?? _backgroundJobs.FirstOrDefault();
+        if (selectedRow is null)
+        {
+            await new NetworkInfoWindow("Background Job Log", "No background job has been selected or queued yet.").ShowDialog(this);
+            return;
+        }
+
+        string details = _app.BackgroundJobs.ReadJobLog(selectedRow.JobId);
+        await new NetworkInfoWindow($"Job Log: {selectedRow.Title}", details).ShowDialog(this);
+    }
+
+    private async void OnViewDicomTraceLogClick(object? sender, RoutedEventArgs e)
+    {
+        string logPath = _app.NetworkSettingsService.CurrentSettings.DicomCommunicationLogPath;
+        string details = File.Exists(logPath)
+            ? File.ReadAllText(logPath)
+            : $"No DICOM communication trace exists yet at:\n{logPath}";
+        await new NetworkInfoWindow("DICOM Communication Trace", details).ShowDialog(this);
+    }
+
+    private void OpenStudyInViewerWindows(
+        StudyDetails details,
+        RemoteStudyRetrievalSession? retrievalSession,
+        PriorStudyLookupMode priorLookupMode,
+        IReadOnlyList<PriorStudySummary> priorStudies)
+    {
+        CloseManagedViewerWindows();
+
+        int viewerCount = Math.Clamp(_viewerWindowCount, 1, 4);
+        bool priorsAvailable = priorStudies.Count > 0;
+
+        for (int index = 0; index < viewerCount; index++)
+        {
+            bool startBlank = priorsAvailable && index > 0;
+            var viewer = new StudyViewerWindow(
+                new ViewerStudyContext
+                {
+                    StudyDetails = details,
+                    RemoteRetrievalSession = index == 0 ? retrievalSession : null,
+                    LoadPriorStudiesAsync = cancellationToken => _app.PriorStudyLookupService.FindPriorStudiesAsync(details.Study, priorLookupMode, cancellationToken),
+                    LoadPriorStudyPreviewAsync = (priorStudy, onUpdated, cancellationToken) => _app.PriorStudyLookupService.LoadPriorStudyPreviewAsync(priorStudy, onUpdated, cancellationToken),
+                    InitialPriorStudies = priorStudies,
+                    StartBlank = startBlank,
+                    LayoutRows = 1,
+                    LayoutColumns = 1,
+                },
+                $"StudyViewerWindow{index + 1}",
+                index + 1);
+            viewer.Closed += OnManagedViewerClosed;
+            _managedViewerWindows.Add(viewer);
+            viewer.Show(this);
+        }
+
+        string statusMessage = priorsAvailable && viewerCount > 1
+            ? $"Opened study in Viewer 1. Viewers 2-{viewerCount} are ready for manual prior comparison."
+            : viewerCount == 1
+                ? "Opened study in Viewer 1."
+                : $"Opened study in {viewerCount} viewer windows.";
+        SetStatus(statusMessage);
+    }
+
+    private void CloseManagedViewerWindows()
+    {
+        foreach (StudyViewerWindow viewer in _managedViewerWindows.ToList())
+        {
+            viewer.Closed -= OnManagedViewerClosed;
+            viewer.Close();
+        }
+
+        _managedViewerWindows.Clear();
+    }
+
+    private void OnManagedViewerClosed(object? sender, EventArgs e)
+    {
+        if (sender is not StudyViewerWindow viewer)
+        {
+            return;
+        }
+
+        viewer.Closed -= OnManagedViewerClosed;
+        _managedViewerWindows.Remove(viewer);
     }
 
     private async Task RefreshNetworkInfoPanelAsync()
@@ -1622,6 +1760,16 @@ public partial class MainWindow : Window
 
     private sealed record DriveHealth(string Label, HealthTone Tone, string PrimaryText, string SecondaryText);
 
+    private sealed class BackgroundJobRow
+    {
+        public Guid JobId { get; init; }
+        public string TypeLabel { get; init; } = string.Empty;
+        public string Title { get; init; } = string.Empty;
+        public string StateLabel { get; init; } = string.Empty;
+        public string ProgressLabel { get; init; } = string.Empty;
+        public string StatusText { get; init; } = string.Empty;
+    }
+
     private async void OnStudyDoubleTapped(object? sender, TappedEventArgs e) => await OpenSelectedStudyAsync();
 
     private async Task DeleteSelectedStudyAsync()
@@ -1723,13 +1871,16 @@ public partial class MainWindow : Window
         int selectedCount = GetSelectedStudies().Count;
         bool singleSelected = selectedCount == 1;
         bool anySelected = selectedCount > 0;
+        StudyListItem? selectedStudy = singleSelected ? GetPrimarySelectedStudy() : null;
         bool sendEnabled = anySelected
             && !_filesystemScanInProgress
             && (_browserMode == BrowserMode.Database || _browserMode == BrowserMode.Filesystem);
 
         ViewActionButton.IsEnabled = singleSelected;
         SendActionButton.IsEnabled = sendEnabled;
-        ModifyActionButton.IsEnabled = _browserMode == BrowserMode.Database && singleSelected;
+        ModifyActionButton.IsEnabled = _browserMode == BrowserMode.Database
+            && singleSelected
+            && selectedStudy?.Availability == StudyAvailability.Imported;
     }
 
     private void BeginFilesystemScan(string folderPath)
@@ -1855,6 +2006,7 @@ public partial class MainWindow : Window
                 _showPatientPanel = settings.ShowPatientPanel;
                 _browserMode = settings.LastBrowserMode;
                 _filesystemRootPath = string.IsNullOrWhiteSpace(settings.FilesystemRootPath) ? null : settings.FilesystemRootPath;
+                _viewerWindowCount = Math.Clamp(settings.ViewerWindowCount, 1, 4);
             }
         }
         catch
@@ -1864,6 +2016,7 @@ public partial class MainWindow : Window
             _showPatientPanel = true;
             _browserMode = BrowserMode.Database;
             _filesystemRootPath = null;
+            _viewerWindowCount = 1;
         }
     }
 
@@ -1879,6 +2032,7 @@ public partial class MainWindow : Window
                 ShowPatientPanel = _showPatientPanel,
                 LastBrowserMode = _browserMode,
                 FilesystemRootPath = _filesystemRootPath,
+                ViewerWindowCount = Math.Clamp(_viewerWindowCount, 1, 4),
             };
 
             File.WriteAllText(_browserLayoutSettingsPath, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
@@ -2168,5 +2322,6 @@ public partial class MainWindow : Window
         public bool ShowPatientPanel { get; init; } = true;
         public BrowserMode LastBrowserMode { get; init; } = BrowserMode.Database;
         public string? FilesystemRootPath { get; init; }
+        public int ViewerWindowCount { get; init; } = 1;
     }
 }

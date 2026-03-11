@@ -33,25 +33,28 @@ KPACS.Viewer.Avalonia/          — Cross-platform study browser + DICOM viewer 
 ├── App.axaml / App.axaml.cs      — Application entry point, imagebox bootstrap, Semi.Avalonia light theme
 ├── Program.cs                    — Avalonia desktop entry point
 ├── MainWindow.axaml / .cs        — K-PACS-style study browser with Database / Network / Filesystem modes
-├── StudyViewerWindow.axaml / .cs — Multi-viewport study viewer with thumbnails, LUTs, stack tool, and progressive remote loading
+├── StudyViewerWindow.axaml / .cs — Multi-viewport study viewer with thumbnails, LUTs, stack tool, progressive remote loading, and volume-aware slab navigation
 ├── ViewerTypes.cs                — ColorScheme, ViewerTool, MouseWheelMode enumerations
 ├── Models/
+│   ├── BackgroundJobModels.cs    — Background import/send job states and metadata
 │   ├── ImageboxModels.cs         — Browser, study, import, filesystem tree, and query models
 │   ├── NetworkModels.cs          — Remote archive and network settings models
 │   └── ToastNotificationItem.cs  — Transient in-window notification models
 ├── Controls/
-│   └── DicomViewPanel.axaml / .cs— Core viewer control: zoom, pan, window/level, stack scrolling, overlays
+│   └── DicomViewPanel.axaml / .cs— Core viewer control: zoom, pan, window/level, stack scrolling, overlays, and in-panel volume controls
 ├── Services/
+│   ├── BackgroundJobService.cs   — Central job tracking and per-job log files for import/send
 │   ├── ImageboxBootstrap.cs      — Local imagebox path setup under LocalApplicationData
 │   ├── ImageboxRepository.cs     — SQLite storage for studies, series, instances, and search
-│   ├── DicomImportService.cs     — Import into local imagebox/SQLite
+│   ├── DicomImportService.cs     — Metadata indexing plus queued/background import into local imagebox/SQLite
 │   ├── DicomFilesystemScanService.cs — Scan-only preview of filesystem/DICOMDIR studies
 │   ├── DicomStudyDeletionService.cs  — Delete study from SQLite and stored files
 │   ├── DicomPseudonymizationService.cs — Pseudonymize imported studies in-place
-│   ├── DicomRemoteStudyBrowserService.cs — Remote C-FIND/C-MOVE/C-STORE integration
+│   ├── DicomRemoteStudyBrowserService.cs — Remote C-FIND/C-MOVE/C-STORE integration with queued background send
 │   ├── NetworkSettingsService.cs — Persistent network-settings.json management
 │   ├── RemoteStudyRetrievalSession.cs — Progressive representative-image-first retrieval
 │   ├── StorageScpService.cs      — Local Storage SCP receiver with import pipeline
+│   ├── VolumeLoaderService.cs    — Series-to-volume loader for axial/coronal/sagittal reconstruction
 │   ├── ViewerStudyContext.cs     — Study viewer input context
 │   └── WindowPlacementService.cs — Window geometry persistence
 ├── Windows/
@@ -59,7 +62,9 @@ KPACS.Viewer.Avalonia/          — Cross-platform study browser + DICOM viewer 
     └── NetworkSettingsWindow.cs  — Network configuration dialog
 └── Rendering/
     ├── DicomPixelRenderer.cs     — Pixel rendering engine (platform-independent)
-    └── ColorLut.cs               — Color lookup tables (platform-independent)
+    ├── ColorLut.cs               — Color lookup tables (platform-independent)
+    ├── SeriesVolume.cs           — In-memory voxel volume model with patient-space geometry
+    └── VolumeReslicer.cs         — Orthogonal reslice and slab projection engine (MPR, MipPR, MinPR, MPVRT)
 ```
 
 ## Current Status
@@ -82,11 +87,15 @@ The Avalonia application has moved beyond a single-file viewer and now includes 
 - **Database mode** backed by a local SQLite imagebox
 - **Filesystem mode** with Windows-style `Computer` root, drive browsing, folder scan, and optional DICOMDIR usage
 - **Network mode** with configured remote archive search, preview of remote series, and representative-image-first retrieval into the local imagebox
-- **Preview-before-import workflow**: filesystem scans build preview studies first, and actual import happens only on explicit open/import workflows
+- **Preview-before-import workflow**: filesystem scans build preview studies first, and opening a study can copy it into the local imagebox in the background while it is already viewable
 - **Study actions**: view, send to remote archive, pseudonymize, and delete study (including multi-select send/delete for local studies)
+- **Background job monitor** for import/send tasks with progress, per-job logs, and optional DICOM communication trace inspection
+- **Multi-window study viewing** with configurable 1-4 viewer windows, persisted placement per viewer, and a safety-first clear-all-open-viewers flow before opening a new study
 - **Multi-viewport study viewer** with thumbnail strip, layout selection, LUT switching, stack-tool drag behavior, direct active-viewport selection, and drag-reassignable series layouting
 - **Interactive orientation/navigation overlays** including patient left/right markers and a Shift-held transient 3D cursor for cross-view localization
 - **Editable measurement tools** including pixel lens, line, angle, rectangular ROI, and polygon ROI, anchored to the referenced slice geometry in patient space
+- **Volume-aware series viewing** for real volumetric CT/MR stacks with cached in-memory voxel volumes, axial/coronal/sagittal reslicing, and slab projection modes
+- **In-panel volume interaction badges** shown only for true volume datasets: orientation switching, projection-mode switching, and drag-adjustable slab thickness in mm
 - **Search/filter support** in Database, Filesystem, and Network mode, including wildcard remote matching and safe blocking of empty remote queries
 - **Local Storage SCP receiving** backed by fo-dicom with automatic import into the local imagebox
 - **Operational polish** including toast notifications, persisted browser/viewer window placement, persisted study browser splitters, and non-modal viewer windows
@@ -194,6 +203,7 @@ The Avalonia application now supports a practical local-plus-network K-PACS work
 
 - **Database** — studies already imported into the local SQLite imagebox
 - **Filesystem** — browse drives/folders, scan DICOM folders or DICOMDIR media, preview studies, then import on demand
+- **Filesystem** — browse drives/folders, scan DICOM folders or DICOMDIR media, preview studies, open them immediately, and let the local copy continue in the background
 - **Network** — configure one primary remote archive, query studies, preview remote series, and open studies with progressive background retrieval into the local imagebox
 - **Email** — placeholder tab for future mail/export workflows
 
@@ -215,6 +225,7 @@ Additional runtime configuration files are stored alongside the imagebox root:
 - `network-settings.json` — local AE title/port plus the configured remote archive
 - `window-placement.json` — persisted browser/viewer geometry
 - `study-browser-layout.json` — persisted patient/study and study/series splitter sizes
+- `job-logs/` — per-job import/send logs written by the background job service
 
 ### Network workflow notes
 
@@ -222,6 +233,14 @@ Additional runtime configuration files are stored alongside the imagebox root:
 - Remaining series continue downloading in the background through the configured local Storage SCP.
 - Local studies can be sent back to the configured archive with the `Send` action in Database mode.
 - Empty network searches are blocked on purpose to avoid accidental full-archive C-FIND requests.
+
+### Volume viewing notes
+
+- Volume controls are shown only when a series could be promoted to a true in-memory volume; 2D datasets such as plain radiography, angiography, or ultrasound continue to use the legacy single-slice viewer path.
+- The viewer loads the initial series through the existing file-based path first and upgrades matching series to cached voxel volumes in the background.
+- The orientation badge inside the view panel switches between Axial, Coronal, and Sagittal.
+- The projection badge inside the view panel switches between MPR, MipPR, MinPR, and MPVRT.
+- Dragging on the projection badge changes slab thickness in millimeters; holding Shift while dragging enables finer adjustment.
 
 ### Remote DICOM archive configuration examples
 

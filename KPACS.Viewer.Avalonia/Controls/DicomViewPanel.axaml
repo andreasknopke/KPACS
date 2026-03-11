@@ -83,10 +83,52 @@
                    VerticalAlignment="Top" HorizontalAlignment="Left"
                    Margin="10" IsHitTestVisible="False" />
 
-        <TextBlock x:Name="OverlayTopRight"
+        <StackPanel VerticalAlignment="Top"
+                HorizontalAlignment="Right"
+                Margin="10"
+                Spacing="6">
+            <TextBlock x:Name="OverlayTopRight"
                    Text="" Foreground="#FFFFDD00" FontFamily="Consolas" FontSize="13"
-                   VerticalAlignment="Top" HorizontalAlignment="Right"
-                   Margin="10" IsHitTestVisible="False" TextAlignment="Right" />
+                   HorizontalAlignment="Right"
+                   IsHitTestVisible="False"
+                   TextAlignment="Right" />
+
+            <Border x:Name="OrientationBadge"
+                Background="#D0151515"
+                BorderBrush="#8066D9FF"
+                BorderThickness="1"
+                CornerRadius="4"
+                Padding="8,4"
+                HorizontalAlignment="Right"
+                IsVisible="False"
+                ToolTip.Tip="Linksklick: Ebene wechseln&#10;Rechtsklick: Axial, Coronal oder Sagittal wählen">
+            <TextBlock x:Name="OrientationBadgeText"
+                   Text=""
+                   Foreground="#FFB9E9FF"
+                   FontFamily="Consolas"
+                   FontSize="12"
+                   FontWeight="SemiBold"
+                   TextAlignment="Right" />
+            </Border>
+
+            <Border x:Name="ProjectionBadge"
+                Background="#D0151515"
+                BorderBrush="#80FFFFDD00"
+                BorderThickness="1"
+                CornerRadius="4"
+                Padding="8,4"
+                HorizontalAlignment="Right"
+                IsVisible="False"
+                ToolTip.Tip="Linksklick ziehen: Sichtdicke ändern&#10;Rechtsklick: MPR, MipPR, MinPR oder MPVRT wählen">
+            <TextBlock x:Name="ProjectionBadgeText"
+                   Text=""
+                   Foreground="#FFFFDD00"
+                   FontFamily="Consolas"
+                   FontSize="12"
+                   FontWeight="SemiBold"
+                   TextAlignment="Right" />
+            </Border>
+        </StackPanel>
 
         <TextBlock x:Name="OverlayCenterLeft"
                Text="" Foreground="#FFFFDD00" FontFamily="Consolas" FontSize="22" FontWeight="Bold"

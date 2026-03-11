@@ -13,11 +13,15 @@ public sealed class DicomRemoteStudyBrowserService
 
     private readonly NetworkSettingsService _settingsService;
     private readonly ImageboxRepository _repository;
+    private readonly BackgroundJobService _backgroundJobs;
+    private readonly Lock _sendSyncRoot = new();
+    private readonly HashSet<string> _queuedSendKeys = new(StringComparer.Ordinal);
 
-    public DicomRemoteStudyBrowserService(NetworkSettingsService settingsService, ImageboxRepository repository)
+    public DicomRemoteStudyBrowserService(NetworkSettingsService settingsService, ImageboxRepository repository, BackgroundJobService backgroundJobs)
     {
         _settingsService = settingsService;
         _repository = repository;
+        _backgroundJobs = backgroundJobs;
     }
 
     public RemoteArchiveEndpoint? GetSelectedArchive() => _settingsService.CurrentSettings.GetSelectedArchive();
@@ -324,6 +328,85 @@ public sealed class DicomRemoteStudyBrowserService
         }
 
         return true;
+    }
+
+    public Task<bool> QueueSendStudyAsync(StudyDetails studyDetails, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(studyDetails);
+
+        RemoteArchiveEndpoint archive = GetSelectedArchive()
+            ?? throw new InvalidOperationException("No remote archive is configured.");
+
+        string queueKey = $"send:{archive.Id}:{studyDetails.Study.StudyInstanceUid}";
+        lock (_sendSyncRoot)
+        {
+            if (!_queuedSendKeys.Add(queueKey))
+            {
+                return Task.FromResult(false);
+            }
+        }
+
+        List<string> filePaths = studyDetails.Series
+            .SelectMany(series => series.Instances)
+            .Select(instance => instance.FilePath)
+            .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (filePaths.Count == 0)
+        {
+            lock (_sendSyncRoot)
+            {
+                _queuedSendKeys.Remove(queueKey);
+            }
+
+            throw new InvalidOperationException("The selected study has no local or reachable DICOM files to send.");
+        }
+
+        BackgroundJobInfo job = _backgroundJobs.CreateJob(
+            BackgroundJobType.Send,
+            queueKey,
+            $"Send {studyDetails.Study.PatientName}".Trim(),
+            $"Queued send for study {studyDetails.Study.PatientName} to {archive.Name}.");
+        _backgroundJobs.AppendLog(job.JobId, $"Archive: {archive.Name} ({archive.Host}:{archive.Port}, AE {archive.RemoteAeTitle})");
+        _backgroundJobs.AppendLog(job.JobId, $"Files scheduled: {filePaths.Count}");
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                _backgroundJobs.MarkRunning(job.JobId, $"Sending {studyDetails.Study.PatientName} to {archive.Name}...", filePaths.Count);
+                var progress = new Progress<(int completed, int total)>(update =>
+                {
+                    _backgroundJobs.ReportProgress(
+                        job.JobId,
+                        $"Sending {studyDetails.Study.PatientName} to {archive.Name}: {update.completed}/{update.total} images sent.",
+                        update.completed,
+                        update.total);
+                });
+
+                bool success = await SendStudyAsync(studyDetails, progress, cancellationToken);
+                if (!success)
+                {
+                    throw new InvalidOperationException($"C-STORE failed while sending the study to {archive.Name}.");
+                }
+
+                _backgroundJobs.MarkCompleted(job.JobId, $"Send completed for {studyDetails.Study.PatientName} to {archive.Name}. {filePaths.Count} images sent.");
+            }
+            catch (Exception ex)
+            {
+                _backgroundJobs.MarkFailed(job.JobId, $"Send failed for {studyDetails.Study.PatientName} to {archive.Name}: {ex.Message}");
+            }
+            finally
+            {
+                lock (_sendSyncRoot)
+                {
+                    _queuedSendKeys.Remove(queueKey);
+                }
+            }
+        }, cancellationToken);
+
+        return Task.FromResult(true);
     }
 
     public async Task<StudyDetails?> RetrieveStudyForViewerAsync(RemoteStudySearchResult result, IReadOnlyCollection<RemoteSeriesPreview>? seriesPreviews, IProgress<string>? status = null, CancellationToken cancellationToken = default)

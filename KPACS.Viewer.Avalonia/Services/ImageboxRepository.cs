@@ -40,6 +40,8 @@ public sealed class ImageboxRepository
                 study_date TEXT NOT NULL,
                 modalities TEXT NOT NULL,
                 storage_path TEXT NOT NULL,
+                source_path TEXT NOT NULL DEFAULT '',
+                availability_status TEXT NOT NULL DEFAULT 'Imported',
                 imported_at_utc TEXT NOT NULL,
                 updated_at_utc TEXT NOT NULL
             );
@@ -61,6 +63,7 @@ public sealed class ImageboxRepository
                 sop_instance_uid TEXT NOT NULL UNIQUE,
                 sop_class_uid TEXT NOT NULL DEFAULT '',
                 file_path TEXT NOT NULL,
+                source_file_path TEXT NOT NULL DEFAULT '',
                 instance_number INTEGER NOT NULL,
                 frame_count INTEGER NOT NULL DEFAULT 1,
                 FOREIGN KEY (series_key) REFERENCES series(series_key) ON DELETE CASCADE
@@ -78,7 +81,10 @@ public sealed class ImageboxRepository
         await command.ExecuteNonQueryAsync(cancellationToken);
 
         await EnsureColumnExistsAsync(connection, "studies", "patient_birth_date", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+        await EnsureColumnExistsAsync(connection, "studies", "source_path", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+        await EnsureColumnExistsAsync(connection, "studies", "availability_status", "TEXT NOT NULL DEFAULT 'Imported'", cancellationToken);
         await EnsureColumnExistsAsync(connection, "instances", "sop_class_uid", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+        await EnsureColumnExistsAsync(connection, "instances", "source_file_path", "TEXT NOT NULL DEFAULT ''", cancellationToken);
     }
 
     public async Task<List<StudyListItem>> SearchStudiesAsync(StudyQuery query, CancellationToken cancellationToken = default)
@@ -94,23 +100,7 @@ public sealed class ImageboxRepository
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            results.Add(new StudyListItem
-            {
-                StudyKey = reader.GetInt64(0),
-                StudyInstanceUid = reader.GetString(1),
-                PatientName = reader.GetString(2),
-                PatientId = reader.GetString(3),
-                PatientBirthDate = reader.GetString(4),
-                AccessionNumber = reader.GetString(5),
-                StudyDescription = reader.GetString(6),
-                ReferringPhysician = reader.GetString(7),
-                StudyDate = reader.GetString(8),
-                Modalities = reader.GetString(9),
-                StoragePath = reader.GetString(10),
-                ImportedAtUtc = ParseImportedAtUtc(reader.GetString(11)),
-                SeriesCount = reader.GetInt32(12),
-                InstanceCount = reader.GetInt32(13),
-            });
+            results.Add(MapStudyListItem(reader));
         }
 
         return results;
@@ -127,7 +117,7 @@ public sealed class ImageboxRepository
             command.CommandText = """
                   SELECT s.study_key, s.study_instance_uid, s.patient_name, s.patient_id, s.patient_birth_date, s.accession_number,
                        s.study_description, s.referring_physician, s.study_date, s.modalities,
-                       s.storage_path, s.imported_at_utc,
+                       s.storage_path, s.source_path, s.availability_status, s.imported_at_utc,
                        COALESCE((SELECT COUNT(*) FROM series sr WHERE sr.study_key = s.study_key), 0),
                        COALESCE((SELECT COUNT(*) FROM instances i JOIN series sr ON sr.series_key = i.series_key WHERE sr.study_key = s.study_key), 0)
                 FROM studies s
@@ -138,23 +128,7 @@ public sealed class ImageboxRepository
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (await reader.ReadAsync(cancellationToken))
             {
-                study = new StudyListItem
-                {
-                    StudyKey = reader.GetInt64(0),
-                    StudyInstanceUid = reader.GetString(1),
-                    PatientName = reader.GetString(2),
-                    PatientId = reader.GetString(3),
-                    PatientBirthDate = reader.GetString(4),
-                    AccessionNumber = reader.GetString(5),
-                    StudyDescription = reader.GetString(6),
-                    ReferringPhysician = reader.GetString(7),
-                    StudyDate = reader.GetString(8),
-                    Modalities = reader.GetString(9),
-                    StoragePath = reader.GetString(10),
-                    ImportedAtUtc = ParseImportedAtUtc(reader.GetString(11)),
-                    SeriesCount = reader.GetInt32(12),
-                    InstanceCount = reader.GetInt32(13),
-                };
+                study = MapStudyListItem(reader);
             }
         }
 
@@ -171,7 +145,7 @@ public sealed class ImageboxRepository
             command.CommandText = """
                 SELECT sr.series_key, sr.study_key, sr.series_instance_uid, sr.modality,
                        sr.series_description, sr.series_number, sr.instance_count,
-                      i.instance_key, i.series_key, i.sop_instance_uid, i.sop_class_uid, i.file_path, i.instance_number, i.frame_count
+                       i.instance_key, i.series_key, i.sop_instance_uid, i.sop_class_uid, i.file_path, i.source_file_path, i.instance_number, i.frame_count
                 FROM series sr
                 LEFT JOIN instances i ON i.series_key = sr.series_key
                 WHERE sr.study_key = $studyKey
@@ -211,14 +185,14 @@ public sealed class ImageboxRepository
                     SopInstanceUid = reader.GetString(9),
                     SopClassUid = reader.GetString(10),
                     FilePath = reader.GetString(11),
-                    InstanceNumber = reader.GetInt32(12),
-                    FrameCount = reader.GetInt32(13),
+                    SourceFilePath = reader.GetString(12),
+                    InstanceNumber = reader.GetInt32(13),
+                    FrameCount = reader.GetInt32(14),
                 });
             }
         }
 
         details.PopulateLegacyStudyInfo();
-
         return details;
     }
 
@@ -287,7 +261,7 @@ public sealed class ImageboxRepository
         command.CommandText = $"""
             SELECT s.study_key, s.study_instance_uid, s.patient_name, s.patient_id, s.patient_birth_date, s.accession_number,
                    s.study_description, s.referring_physician, s.study_date, s.modalities,
-                   s.storage_path, s.imported_at_utc,
+                   s.storage_path, s.source_path, s.availability_status, s.imported_at_utc,
                    COALESCE((SELECT COUNT(*) FROM series sr WHERE sr.study_key = s.study_key), 0) AS series_count,
                    COALESCE((SELECT COUNT(*) FROM instances i JOIN series sr ON sr.series_key = i.series_key WHERE sr.study_key = s.study_key), 0) AS instance_count
             FROM studies s
@@ -300,23 +274,7 @@ public sealed class ImageboxRepository
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            results.Add(new StudyListItem
-            {
-                StudyKey = reader.GetInt64(0),
-                StudyInstanceUid = reader.GetString(1),
-                PatientName = reader.GetString(2),
-                PatientId = reader.GetString(3),
-                PatientBirthDate = reader.GetString(4),
-                AccessionNumber = reader.GetString(5),
-                StudyDescription = reader.GetString(6),
-                ReferringPhysician = reader.GetString(7),
-                StudyDate = reader.GetString(8),
-                Modalities = reader.GetString(9),
-                StoragePath = reader.GetString(10),
-                ImportedAtUtc = ParseImportedAtUtc(reader.GetString(11)),
-                SeriesCount = reader.GetInt32(12),
-                InstanceCount = reader.GetInt32(13),
-            });
+            results.Add(MapStudyListItem(reader));
         }
 
         return results;
@@ -329,9 +287,9 @@ public sealed class ImageboxRepository
         await using var command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO studies(study_instance_uid, patient_name, patient_id, patient_birth_date, accession_number, study_description,
-                                referring_physician, study_date, modalities, storage_path, imported_at_utc, updated_at_utc)
+                                referring_physician, study_date, modalities, storage_path, source_path, availability_status, imported_at_utc, updated_at_utc)
             VALUES ($uid, $patientName, $patientId, $patientBirthDate, $accessionNumber, $studyDescription, $refPhys, $studyDate,
-                    $modalities, $storagePath, $importedAtUtc, $updatedAtUtc)
+                    $modalities, $storagePath, $sourcePath, $availabilityStatus, $importedAtUtc, $updatedAtUtc)
             ON CONFLICT(study_instance_uid) DO UPDATE SET
                 patient_name = excluded.patient_name,
                 patient_id = excluded.patient_id,
@@ -342,6 +300,8 @@ public sealed class ImageboxRepository
                 study_date = excluded.study_date,
                 modalities = excluded.modalities,
                 storage_path = excluded.storage_path,
+                source_path = excluded.source_path,
+                availability_status = excluded.availability_status,
                 updated_at_utc = excluded.updated_at_utc
             RETURNING study_key;
             """;
@@ -380,12 +340,13 @@ public sealed class ImageboxRepository
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO instances(series_key, sop_instance_uid, sop_class_uid, file_path, instance_number, frame_count)
-            VALUES ($seriesKey, $uid, $sopClassUid, $filePath, $instanceNumber, $frameCount)
+            INSERT INTO instances(series_key, sop_instance_uid, sop_class_uid, file_path, source_file_path, instance_number, frame_count)
+            VALUES ($seriesKey, $uid, $sopClassUid, $filePath, $sourceFilePath, $instanceNumber, $frameCount)
             ON CONFLICT(sop_instance_uid) DO UPDATE SET
                 series_key = excluded.series_key,
                 sop_class_uid = excluded.sop_class_uid,
                 file_path = excluded.file_path,
+                source_file_path = excluded.source_file_path,
                 instance_number = excluded.instance_number,
                 frame_count = excluded.frame_count;
             """;
@@ -393,8 +354,28 @@ public sealed class ImageboxRepository
         command.Parameters.AddWithValue("$uid", instance.SopInstanceUid);
         command.Parameters.AddWithValue("$sopClassUid", instance.SopClassUid);
         command.Parameters.AddWithValue("$filePath", instance.FilePath);
+        command.Parameters.AddWithValue("$sourceFilePath", string.IsNullOrWhiteSpace(instance.SourceFilePath) ? instance.FilePath : instance.SourceFilePath);
         command.Parameters.AddWithValue("$instanceNumber", instance.InstanceNumber);
         command.Parameters.AddWithValue("$frameCount", instance.FrameCount);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task UpdateStudyImportStateAsync(long studyKey, StudyAvailability availability, string storagePath, CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE studies
+            SET availability_status = $availabilityStatus,
+                storage_path = $storagePath,
+                updated_at_utc = $updatedAtUtc
+            WHERE study_key = $studyKey;
+            """;
+        command.Parameters.AddWithValue("$studyKey", studyKey);
+        command.Parameters.AddWithValue("$availabilityStatus", availability.ToString());
+        command.Parameters.AddWithValue("$storagePath", storagePath);
+        command.Parameters.AddWithValue("$updatedAtUtc", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -512,7 +493,7 @@ public sealed class ImageboxRepository
         return $"""
             SELECT s.study_key, s.study_instance_uid, s.patient_name, s.patient_id, s.patient_birth_date, s.accession_number,
                    s.study_description, s.referring_physician, s.study_date, s.modalities,
-                   s.storage_path, s.imported_at_utc,
+                   s.storage_path, s.source_path, s.availability_status, s.imported_at_utc,
                    COALESCE((SELECT COUNT(*) FROM series sr WHERE sr.study_key = s.study_key), 0) AS series_count,
                    COALESCE((SELECT COUNT(*) FROM instances i JOIN series sr ON sr.series_key = i.series_key WHERE sr.study_key = s.study_key), 0) AS instance_count
             FROM studies s
@@ -529,6 +510,16 @@ public sealed class ImageboxRepository
         }
 
         return DateTime.UtcNow;
+    }
+
+    private static StudyAvailability ParseStudyAvailability(string value)
+    {
+        if (Enum.TryParse(value, true, out StudyAvailability parsed))
+        {
+            return parsed;
+        }
+
+        return StudyAvailability.Imported;
     }
 
     private static void AddQueryParameters(SqliteCommand command, StudyQuery query)
@@ -562,7 +553,36 @@ public sealed class ImageboxRepository
         command.Parameters.AddWithValue("$studyDate", study.StudyDate);
         command.Parameters.AddWithValue("$modalities", study.Modalities);
         command.Parameters.AddWithValue("$storagePath", study.StoragePath);
+        command.Parameters.AddWithValue("$sourcePath", study.SourcePath);
+        command.Parameters.AddWithValue("$availabilityStatus", study.Availability.ToString());
         command.Parameters.AddWithValue("$importedAtUtc", study.ImportedAtUtc.ToString("O", CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue("$updatedAtUtc", DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+    }
+
+    private static StudyListItem MapStudyListItem(SqliteDataReader reader)
+    {
+        var study = new StudyListItem
+        {
+            StudyKey = reader.GetInt64(0),
+            StudyInstanceUid = reader.GetString(1),
+            PatientName = reader.GetString(2),
+            PatientId = reader.GetString(3),
+            PatientBirthDate = reader.GetString(4),
+            AccessionNumber = reader.GetString(5),
+            StudyDescription = reader.GetString(6),
+            ReferringPhysician = reader.GetString(7),
+            StudyDate = reader.GetString(8),
+            Modalities = reader.GetString(9),
+            StoragePath = reader.GetString(10),
+            SourcePath = reader.GetString(11),
+            Availability = ParseStudyAvailability(reader.GetString(12)),
+            ImportedAtUtc = ParseImportedAtUtc(reader.GetString(13)),
+            SeriesCount = reader.GetInt32(14),
+            InstanceCount = reader.GetInt32(15),
+        };
+
+        study.IsPreviewOnly = study.Availability != StudyAvailability.Imported;
+        study.PreviewSourcePath = study.SourcePath;
+        return study;
     }
 }

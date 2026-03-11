@@ -900,7 +900,22 @@ public partial class DicomViewPanel
     {
         value = 0;
 
-        if (_rawPixelData is null || _samplesPerPixel != 1 || x < 0 || y < 0 || x >= _imageWidth || y >= _imageHeight)
+        if (x < 0 || y < 0 || x >= _imageWidth || y >= _imageHeight)
+            return false;
+
+        // Volume path: values are already rescaled
+        if (_volumeSlicePixels is not null)
+        {
+            int idx = (y * _imageWidth) + x;
+            if (idx < _volumeSlicePixels.Length)
+            {
+                value = _volumeSlicePixels[idx];
+                return true;
+            }
+            return false;
+        }
+
+        if (_rawPixelData is null || _samplesPerPixel != 1)
         {
             return false;
         }

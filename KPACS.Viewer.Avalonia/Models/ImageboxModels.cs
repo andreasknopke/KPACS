@@ -24,9 +24,18 @@ public sealed class StudyQuery
     public DateOnly? ToStudyDate { get; set; }
 }
 
+public enum StudyAvailability
+{
+    IndexedExternal,
+    ImportQueued,
+    Importing,
+    Imported,
+    ImportFailed,
+}
+
 public sealed class StudyListItem
 {
-    public long StudyKey { get; init; }
+    public long StudyKey { get; set; }
     public string StudyInstanceUid { get; init; } = string.Empty;
     public string PatientName { get; set; } = string.Empty;
     public string PatientId { get; set; } = string.Empty;
@@ -39,6 +48,8 @@ public sealed class StudyListItem
     public int SeriesCount { get; set; }
     public int InstanceCount { get; set; }
     public string StoragePath { get; set; } = string.Empty;
+    public string SourcePath { get; set; } = string.Empty;
+    public StudyAvailability Availability { get; set; } = StudyAvailability.Imported;
     public DateTime ImportedAtUtc { get; set; }
     public bool IsPreviewOnly { get; set; }
     public string PreviewSourcePath { get; set; } = string.Empty;
@@ -60,8 +71,8 @@ public sealed class StudyListItem
 
 public sealed class SeriesRecord
 {
-    public long SeriesKey { get; init; }
-    public long StudyKey { get; init; }
+    public long SeriesKey { get; set; }
+    public long StudyKey { get; set; }
     public string SeriesInstanceUid { get; init; } = string.Empty;
     public string Modality { get; set; } = string.Empty;
     public string SeriesDescription { get; set; } = string.Empty;
@@ -72,11 +83,12 @@ public sealed class SeriesRecord
 
 public sealed class InstanceRecord
 {
-    public long InstanceKey { get; init; }
-    public long SeriesKey { get; init; }
+    public long InstanceKey { get; set; }
+    public long SeriesKey { get; set; }
     public string SopInstanceUid { get; init; } = string.Empty;
     public string SopClassUid { get; set; } = string.Empty;
     public string FilePath { get; set; } = string.Empty;
+    public string SourceFilePath { get; set; } = string.Empty;
     public int InstanceNumber { get; set; }
     public int FrameCount { get; set; }
 }

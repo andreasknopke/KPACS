@@ -17,6 +17,7 @@ using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
@@ -50,7 +51,10 @@ public partial class DicomViewPanel : UserControl
         bool FitToWindow,
         double PanX,
         double PanY,
-        int ColorScheme);
+        int ColorScheme,
+        SliceOrientation Orientation,
+        VolumeProjectionMode ProjectionMode,
+        double ProjectionThicknessMm);
 
     public sealed record NavigationState(
         double ZoomFactor,
@@ -93,6 +97,38 @@ public partial class DicomViewPanel : UserControl
     private double _zoomFactor = 1.0;
     private bool _fitToWindow = true;
     private int _colorScheme = 1;
+
+    // ==============================================================================================
+    // Volume rendering state
+    // ==============================================================================================
+
+    private SeriesVolume? _volume;
+    private SliceOrientation _volumeOrientation = SliceOrientation.Axial;
+    private int _volumeSliceIndex;
+    private short[]? _volumeSlicePixels;
+    private VolumeProjectionMode _projectionMode = VolumeProjectionMode.Mpr;
+    private double _projectionThicknessMm = 1.0;
+    private bool _isProjectionThicknessDragging;
+    private double _projectionDragStartThicknessMm;
+    private double _projectionDragStartY;
+    private IPointer? _projectionPointer;
+
+    /// <summary>True when this panel is displaying a slice from a bound volume.</summary>
+    public bool IsVolumeBound => _volume is not null;
+
+    /// <summary>The currently bound volume, if any.</summary>
+    public SeriesVolume? BoundVolume => _volume;
+
+    /// <summary>The current slice orientation when volume-bound.</summary>
+    public SliceOrientation VolumeOrientation => _volumeOrientation;
+
+    /// <summary>The current slice index when volume-bound.</summary>
+    public int VolumeSliceIndex => _volumeSliceIndex;
+    public int VolumeSliceCount => _volume is null ? 0 : VolumeReslicer.GetSliceCount(_volume, _volumeOrientation);
+    public VolumeProjectionMode ProjectionMode => _projectionMode;
+    public double ProjectionThicknessMm => _projectionThicknessMm;
+    public string ProjectionModeLabel => GetProjectionModeLabel(_projectionMode);
+    public string OrientationLabel => GetOrientationLabel(_volumeOrientation);
 
     // ==============================================================================================
     // Rendering
@@ -160,7 +196,7 @@ public partial class DicomViewPanel : UserControl
     public int ImageHeight => _imageHeight;
     public string Modality => _modality;
     public string PatientName => _patientName;
-    public bool IsImageLoaded => _rawPixelData != null;
+    public bool IsImageLoaded => _rawPixelData != null || _volumeSlicePixels != null;
     public int CurrentColorScheme => _colorScheme;
     public string FilePath => _fileName;
     public DicomSpatialMetadata? SpatialMetadata { get; private set; }
@@ -221,9 +257,73 @@ public partial class DicomViewPanel : UserControl
         RootGrid.PointerMoved += OnPointerMoved;
         RootGrid.PointerWheelChanged += OnPointerWheelChanged;
         RootGrid.PointerExited += OnPointerExited;
+        OrientationBadge.PointerPressed += OnOrientationBadgePointerPressed;
+        ProjectionBadge.PointerPressed += OnProjectionBadgePointerPressed;
+        ProjectionBadge.PointerMoved += OnProjectionBadgePointerMoved;
+        ProjectionBadge.PointerReleased += OnProjectionBadgePointerReleased;
+        ProjectionBadge.PointerCaptureLost += OnProjectionBadgePointerCaptureLost;
 
         SizeChanged += OnSizeChanged;
+        InitializeOrientationContextMenu();
+        InitializeProjectionContextMenu();
         UpdateInteractiveCursor();
+    }
+
+    private void InitializeOrientationContextMenu()
+    {
+        OrientationBadge.ContextMenu = new ContextMenu
+        {
+            ItemsSource = new Control[]
+            {
+                CreateOrientationMenuItem("Axial", SliceOrientation.Axial),
+                CreateOrientationMenuItem("Coronal", SliceOrientation.Coronal),
+                CreateOrientationMenuItem("Sagittal", SliceOrientation.Sagittal),
+            }
+        };
+    }
+
+    private MenuItem CreateOrientationMenuItem(string header, SliceOrientation orientation)
+    {
+        var item = new MenuItem { Header = header, Tag = orientation };
+        item.Click += OnOrientationMenuItemClick;
+        return item;
+    }
+
+    private void OnOrientationMenuItemClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: SliceOrientation orientation })
+        {
+            SetVolumeOrientation(orientation);
+        }
+    }
+
+    private void InitializeProjectionContextMenu()
+    {
+        ProjectionBadge.ContextMenu = new ContextMenu
+        {
+            ItemsSource = new Control[]
+            {
+                CreateProjectionMenuItem("MPR", VolumeProjectionMode.Mpr),
+                CreateProjectionMenuItem("MipPR", VolumeProjectionMode.MipPr),
+                CreateProjectionMenuItem("MinPR", VolumeProjectionMode.MinPr),
+                CreateProjectionMenuItem("MPVRT", VolumeProjectionMode.MpVrt),
+            }
+        };
+    }
+
+    private MenuItem CreateProjectionMenuItem(string header, VolumeProjectionMode mode)
+    {
+        var item = new MenuItem { Header = header, Tag = mode };
+        item.Click += OnProjectionMenuItemClick;
+        return item;
+    }
+
+    private void OnProjectionMenuItemClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: VolumeProjectionMode mode })
+        {
+            SetProjectionMode(mode);
+        }
     }
 
     private void UpdateInteractiveCursor(Point? pos = null)
@@ -479,6 +579,10 @@ public partial class DicomViewPanel : UserControl
     public void ClearImage()
     {
         _rawPixelData = null;
+        _volume = null;
+        _volumeSlicePixels = null;
+        _isProjectionThicknessDragging = false;
+        _projectionPointer = null;
         _displayBitmap = null;
         _imageWidth = 0;
         _imageHeight = 0;
@@ -496,28 +600,252 @@ public partial class DicomViewPanel : UserControl
     }
 
     // ==============================================================================================
+    // Volume binding — loads a slice from a pre-built SeriesVolume
+    // ==============================================================================================
+
+    /// <summary>
+    /// Binds this panel to a <see cref="SeriesVolume"/> and displays the given slice.
+    /// Replaces any previously loaded file or volume.
+    /// </summary>
+    public void BindVolume(SeriesVolume volume, SliceOrientation orientation, int sliceIndex)
+    {
+        _rawPixelData = null; // detach from legacy file path
+        _volume = volume;
+        _volumeOrientation = orientation;
+        _projectionThicknessMm = Math.Max(GetMinimumProjectionThicknessMm(), VolumeReslicer.GetSliceSpacing(volume, orientation));
+        _isMonochrome1 = volume.IsMonochrome1;
+        _samplesPerPixel = 1;
+        _bitsAllocated = 16;
+        _bitsStored = 16;
+        _isSigned = true;
+        _rescaleSlope = 1.0;
+        _rescaleIntercept = 0.0;
+
+        // Window defaults from volume
+        _windowCenter = volume.DefaultWindowCenter;
+        _windowWidth = Math.Max(1, volume.DefaultWindowWidth);
+        _defaultWindowCenter = _windowCenter;
+        _defaultWindowWidth = _windowWidth;
+
+        if (_isMonochrome1)
+            SetColorLutInternal(1);
+        else
+            SetColorLutInternal(_colorScheme);
+
+        ShowVolumeSlice(sliceIndex);
+    }
+
+    /// <summary>
+    /// Navigates to a different slice within the currently bound volume.
+    /// Has no effect if no volume is bound.
+    /// </summary>
+    public bool ShowVolumeSlice(int sliceIndex)
+    {
+        if (_volume is null)
+            return false;
+
+        int maxSlice = VolumeReslicer.GetSliceCount(_volume, _volumeOrientation) - 1;
+        sliceIndex = Math.Clamp(sliceIndex, 0, maxSlice);
+        _volumeSliceIndex = sliceIndex;
+
+        // Extract the 2D slice from the volume
+        ReslicedImage resliced = VolumeReslicer.RenderSlab(
+            _volume,
+            _volumeOrientation,
+            sliceIndex,
+            _projectionThicknessMm,
+            _projectionMode);
+        _volumeSlicePixels = resliced.Pixels;
+        _imageWidth = resliced.Width;
+        _imageHeight = resliced.Height;
+        _frameCount = VolumeReslicer.GetSliceCount(_volume, _volumeOrientation);
+
+        SpatialMetadata = resliced.SpatialMetadata;
+        _fileName = SpatialMetadata?.FilePath ?? "";
+        _patientName = "";
+        _patientId = "";
+        _studyDate = "";
+        _studyDescription = "";
+        _institution = "";
+        _modality = "";
+
+        // Create or resize the display bitmap if dimensions changed
+        if (_displayBitmap is null ||
+            _displayBitmap.PixelSize.Width != _imageWidth ||
+            _displayBitmap.PixelSize.Height != _imageHeight)
+        {
+            _displayBitmap = new WriteableBitmap(
+                new PixelSize(_imageWidth, _imageHeight),
+                new Vector(96, 96),
+                Avalonia.Platform.PixelFormat.Bgra8888,
+                Avalonia.Platform.AlphaFormat.Opaque);
+            DicomImage.Source = _displayBitmap;
+            DicomImage.Width = _imageWidth;
+            DicomImage.Height = _imageHeight;
+            DicomImage.InvalidateMeasure();
+        }
+
+        PlaceholderText.IsVisible = false;
+        RenderImage();
+
+        if (_fitToWindow)
+            ApplyInitialFitToWindow();
+
+        Set3DCursorOverlay(null);
+        ResetMeasurementStateForNewImage();
+        UpdateOverlay();
+        ImageLoaded?.Invoke();
+        WindowChanged?.Invoke();
+        ZoomChanged?.Invoke();
+
+        return true;
+    }
+
+    /// <summary>
+    /// Changes the slice orientation of the currently bound volume and resets
+    /// the slice index to the middle of the new axis.
+    /// </summary>
+    public bool SetVolumeOrientation(SliceOrientation orientation)
+    {
+        if (_volume is null || _volumeOrientation == orientation)
+            return false;
+
+        _volumeOrientation = orientation;
+        _projectionThicknessMm = Math.Max(_projectionThicknessMm, GetMinimumProjectionThicknessMm());
+        int midSlice = VolumeReslicer.GetSliceCount(_volume, orientation) / 2;
+        bool changed = ShowVolumeSlice(midSlice);
+        if (changed)
+        {
+            UpdateOverlay();
+            NotifyViewStateChanged();
+        }
+
+        return changed;
+    }
+
+    public bool SetProjectionMode(VolumeProjectionMode mode)
+    {
+        if (_volume is null || _projectionMode == mode)
+        {
+            return false;
+        }
+
+        _projectionMode = mode;
+        ShowVolumeSlice(_volumeSliceIndex);
+        UpdateOverlay();
+        NotifyViewStateChanged();
+        return true;
+    }
+
+    public bool SetProjectionThicknessMm(double thicknessMm)
+    {
+        if (_volume is null)
+        {
+            return false;
+        }
+
+        double clamped = Math.Clamp(thicknessMm, GetMinimumProjectionThicknessMm(), GetMaximumProjectionThicknessMm());
+        if (Math.Abs(clamped - _projectionThicknessMm) < 0.05)
+        {
+            return false;
+        }
+
+        _projectionThicknessMm = clamped;
+        ShowVolumeSlice(_volumeSliceIndex);
+        UpdateOverlay();
+        NotifyViewStateChanged();
+        return true;
+    }
+
+    private double GetMinimumProjectionThicknessMm()
+    {
+        if (_volume is null)
+        {
+            return 1.0;
+        }
+
+        return Math.Max(0.1, VolumeReslicer.GetSliceSpacing(_volume, _volumeOrientation));
+    }
+
+    private double GetMaximumProjectionThicknessMm()
+    {
+        if (_volume is null)
+        {
+            return 500.0;
+        }
+
+        return Math.Max(
+            GetMinimumProjectionThicknessMm(),
+            VolumeReslicer.GetSliceSpacing(_volume, _volumeOrientation) * Math.Max(1, VolumeReslicer.GetSliceCount(_volume, _volumeOrientation)));
+    }
+
+    private static string GetProjectionModeLabel(VolumeProjectionMode mode) => mode switch
+    {
+        VolumeProjectionMode.Mpr => "MPR",
+        VolumeProjectionMode.MipPr => "MipPR",
+        VolumeProjectionMode.MinPr => "MinPR",
+        VolumeProjectionMode.MpVrt => "MPVRT",
+        _ => "MPR",
+    };
+
+    private static string GetOrientationLabel(SliceOrientation orientation) => orientation switch
+    {
+        SliceOrientation.Axial => "Axial",
+        SliceOrientation.Coronal => "Coronal",
+        SliceOrientation.Sagittal => "Sagittal",
+        _ => "Axial",
+    };
+
+    // ==============================================================================================
     // Rendering (ported from TdView.SetDimension → TdcmImgObj pipeline)
     // ==============================================================================================
 
     private void RenderImage()
     {
+        // Volume-based rendering path
+        if (_volumeSlicePixels is not null && _displayBitmap is not null)
+        {
+            int pixelCount = _imageWidth * _imageHeight;
+            byte[] outputBgra = new byte[pixelCount * 4];
+
+            DicomPixelRenderer.RenderRescaled16Bit(
+                _volumeSlicePixels,
+                _imageWidth, _imageHeight,
+                _windowCenter, _windowWidth,
+                _lutR, _lutG, _lutB,
+                _isMonochrome1,
+                outputBgra);
+
+            CopyToDisplayBitmap(outputBgra);
+            return;
+        }
+
+        // Legacy file-based rendering path
         if (_rawPixelData == null || _displayBitmap == null) return;
 
-        int pixelCount = _imageWidth * _imageHeight;
-        byte[] outputBgra = new byte[pixelCount * 4];
+        {
+            int pixelCount = _imageWidth * _imageHeight;
+            byte[] outputBgra = new byte[pixelCount * 4];
 
-        DicomPixelRenderer.Render(
-            _rawPixelData,
-            _imageWidth, _imageHeight,
-            _bitsAllocated, _bitsStored,
-            _isSigned, _samplesPerPixel,
-            _rescaleSlope, _rescaleIntercept,
-            _windowCenter, _windowWidth,
-            _lutR, _lutG, _lutB,
-            _isMonochrome1,
-            outputBgra);
+            DicomPixelRenderer.Render(
+                _rawPixelData,
+                _imageWidth, _imageHeight,
+                _bitsAllocated, _bitsStored,
+                _isSigned, _samplesPerPixel,
+                _rescaleSlope, _rescaleIntercept,
+                _windowCenter, _windowWidth,
+                _lutR, _lutG, _lutB,
+                _isMonochrome1,
+                outputBgra);
 
-        // Avalonia WriteableBitmap: lock, copy pixels, unlock
+            CopyToDisplayBitmap(outputBgra);
+        }
+    }
+
+    private void CopyToDisplayBitmap(byte[] outputBgra)
+    {
+        if (_displayBitmap is null) return;
+
         using (var fb = _displayBitmap.Lock())
         {
             int stride = fb.RowBytes;
@@ -535,7 +863,6 @@ public partial class DicomViewPanel : UserControl
             }
         }
 
-        // Force image to refresh after pixel update
         DicomImage.InvalidateVisual();
     }
 
@@ -595,7 +922,7 @@ public partial class DicomViewPanel : UserControl
     {
         Dispatcher.UIThread.Post(() =>
         {
-            if (!_fitToWindow || _rawPixelData == null)
+            if (!_fitToWindow || (_rawPixelData == null && _volumeSlicePixels == null))
             {
                 return;
             }
@@ -676,7 +1003,10 @@ public partial class DicomViewPanel : UserControl
             _fitToWindow,
             _panX,
             _panY,
-            _colorScheme);
+            _colorScheme,
+            _volumeOrientation,
+            _projectionMode,
+            _projectionThicknessMm);
     }
 
     public bool TryCaptureNavigationState(out NavigationState state)
@@ -686,7 +1016,7 @@ public partial class DicomViewPanel : UserControl
         Point controlCenter = new(RootGrid.Bounds.Width / 2.0, RootGrid.Bounds.Height / 2.0);
         if (!TryGetImagePoint(controlCenter, out Point centerImagePoint))
         {
-            if (_rawPixelData is null || _zoomFactor <= 0)
+            if ((_rawPixelData is null && _volumeSlicePixels is null) || _zoomFactor <= 0)
             {
                 return false;
             }
@@ -709,6 +1039,10 @@ public partial class DicomViewPanel : UserControl
         {
             SetColorLutInternal(state.ColorScheme);
         }
+
+        _volumeOrientation = state.Orientation;
+        _projectionMode = state.ProjectionMode;
+        _projectionThicknessMm = Math.Max(GetMinimumProjectionThicknessMm(), state.ProjectionThicknessMm);
 
         if (state.FitToWindow)
         {
@@ -737,7 +1071,7 @@ public partial class DicomViewPanel : UserControl
 
     public void ApplyNavigationState(NavigationState state)
     {
-        if (_rawPixelData is null)
+        if (_rawPixelData is null && _volumeSlicePixels is null)
         {
             return;
         }
@@ -832,7 +1166,8 @@ public partial class DicomViewPanel : UserControl
 
     private void UpdateOverlay()
     {
-        if (_rawPixelData == null)
+        bool hasImage = _rawPixelData != null || _volumeSlicePixels != null;
+        if (!hasImage)
         {
             OverlayTopLeft.Text = "";
             OverlayTopRight.Text = "";
@@ -851,6 +1186,12 @@ public partial class DicomViewPanel : UserControl
         OverlayTopRight.Text = string.Join("\n",
             new[] { _institution, FormatStudyDate(_studyDate), _studyDescription }
                 .Where(s => !string.IsNullOrEmpty(s)));
+        OrientationBadgeText.Text = _volume is null
+            ? string.Empty
+            : GetOrientationLabel(_volumeOrientation);
+        ProjectionBadgeText.Text = _volume is null
+            ? string.Empty
+            : $"{GetProjectionModeLabel(_projectionMode)}  {_projectionThicknessMm:F1} mm";
 
         OverlayCenterRight.Text = GetHorizontalOrientationLabel(isRightEdge: true);
         OverlayCenterLeft.Text = GetHorizontalOrientationLabel(isRightEdge: false);
@@ -860,7 +1201,24 @@ public partial class DicomViewPanel : UserControl
         string zoomPct = $"Zoom: {_zoomFactor * 100:F0}%";
         string dims = $"{_imageWidth}×{_imageHeight}  {_bitsStored}-bit";
         string info = string.IsNullOrEmpty(_modality) ? dims : $"{dims}  {_modality}";
-        if (_frameCount > 1) info += $"  [{_frameCount} frames]";
+
+        if (_volume is not null)
+        {
+            int sliceCount = VolumeReslicer.GetSliceCount(_volume, _volumeOrientation);
+            string orientLabel = _volumeOrientation switch
+            {
+                SliceOrientation.Axial => "Axial",
+                SliceOrientation.Coronal => "Coronal",
+                SliceOrientation.Sagittal => "Sagittal",
+                _ => ""
+            };
+            info += $"\n{orientLabel} {_volumeSliceIndex + 1}/{sliceCount}  [Volume]";
+        }
+        else if (_frameCount > 1)
+        {
+            info += $"  [{_frameCount} frames]";
+        }
+
         OverlayBottomRight.Text = $"{zoomPct}\n{info}";
         ApplyOverlayVisibility();
     }
@@ -870,6 +1228,8 @@ public partial class DicomViewPanel : UserControl
         bool visible = _showOverlay;
         OverlayTopLeft.IsVisible = visible;
         OverlayTopRight.IsVisible = visible;
+        OrientationBadge.IsVisible = visible && _volume is not null;
+        ProjectionBadge.IsVisible = visible && _volume is not null;
         OverlayCenterLeft.IsVisible = visible && !string.IsNullOrEmpty(OverlayCenterLeft.Text);
         OverlayCenterRight.IsVisible = visible && !string.IsNullOrEmpty(OverlayCenterRight.Text);
         OverlayBottomLeft.IsVisible = visible;
@@ -917,7 +1277,7 @@ public partial class DicomViewPanel : UserControl
     {
         imagePoint = default;
 
-        if (_rawPixelData == null || _zoomFactor <= 0)
+        if ((_rawPixelData == null && _volumeSlicePixels == null) || _zoomFactor <= 0)
         {
             return false;
         }
@@ -930,7 +1290,7 @@ public partial class DicomViewPanel : UserControl
 
     private void Update3DCursorOverlay()
     {
-        if (_cursor3DImagePoint is null || _rawPixelData == null || _zoomFactor <= 0)
+        if (_cursor3DImagePoint is null || (_rawPixelData == null && _volumeSlicePixels == null) || _zoomFactor <= 0)
         {
             Cursor3DHorizontal.IsVisible = false;
             Cursor3DVertical.IsVisible = false;
@@ -994,6 +1354,111 @@ public partial class DicomViewPanel : UserControl
         pointer.Capture(RootGrid);
         _capturedPointer = pointer;
         Cursor = CreateWindowCursor();
+    }
+
+    private void OnProjectionBadgePointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (_volume is null)
+        {
+            return;
+        }
+
+        PointerPoint point = e.GetCurrentPoint(ProjectionBadge);
+        if (point.Properties.IsRightButtonPressed)
+        {
+            ProjectionBadge.ContextMenu?.Open(ProjectionBadge);
+            e.Handled = true;
+            return;
+        }
+
+        if (!point.Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        _isProjectionThicknessDragging = true;
+        _projectionDragStartY = e.GetPosition(RootGrid).Y;
+        _projectionDragStartThicknessMm = _projectionThicknessMm;
+        _projectionPointer = e.Pointer;
+        e.Pointer.Capture(ProjectionBadge);
+        Cursor = new Cursor(StandardCursorType.SizeNorthSouth);
+        e.Handled = true;
+    }
+
+    private void OnOrientationBadgePointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (_volume is null)
+        {
+            return;
+        }
+
+        PointerPoint point = e.GetCurrentPoint(OrientationBadge);
+        if (point.Properties.IsRightButtonPressed)
+        {
+            OrientationBadge.ContextMenu?.Open(OrientationBadge);
+            e.Handled = true;
+            return;
+        }
+
+        if (!point.Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        SliceOrientation nextOrientation = _volumeOrientation switch
+        {
+            SliceOrientation.Axial => SliceOrientation.Coronal,
+            SliceOrientation.Coronal => SliceOrientation.Sagittal,
+            SliceOrientation.Sagittal => SliceOrientation.Axial,
+            _ => SliceOrientation.Axial,
+        };
+
+        SetVolumeOrientation(nextOrientation);
+        e.Handled = true;
+    }
+
+    private void OnProjectionBadgePointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_isProjectionThicknessDragging || _volume is null)
+        {
+            return;
+        }
+
+        double currentY = e.GetPosition(RootGrid).Y;
+        double deltaY = _projectionDragStartY - currentY;
+        double baseThickness = Math.Max(_projectionDragStartThicknessMm, GetMinimumProjectionThicknessMm());
+        double sensitivity = Math.Clamp(baseThickness / 70.0, 0.04, 1.25);
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+        {
+            sensitivity *= 0.35;
+        }
+
+        SetProjectionThicknessMm(_projectionDragStartThicknessMm + (deltaY * sensitivity));
+        e.Handled = true;
+    }
+
+    private void OnProjectionBadgePointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (!_isProjectionThicknessDragging)
+        {
+            return;
+        }
+
+        EndProjectionThicknessDrag();
+        e.Handled = true;
+    }
+
+    private void OnProjectionBadgePointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
+    {
+        EndProjectionThicknessDrag();
+    }
+
+    private void EndProjectionThicknessDrag()
+    {
+        _isProjectionThicknessDragging = false;
+        _projectionPointer?.Capture(null);
+        _projectionPointer = null;
+        UpdateZoneCursor(_mouseDownPos);
     }
 
     private static Cursor CreateWindowCursor()
