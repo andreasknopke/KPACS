@@ -176,18 +176,24 @@ public static class VolumeReslicer
     {
         y = Math.Clamp(y, 0, volume.SizeY - 1);
         int width = volume.SizeX;
-        int height = volume.SizeZ;
+        double targetSpacingY = volume.SpacingY > 0 ? volume.SpacingY : 1.0;
+        int height = GetResampledDepth(volume.SizeZ, volume.SpacingZ, targetSpacingY);
         short[] pixels = new short[width * height];
 
-        for (int z = 0; z < volume.SizeZ; z++)
+        for (int row = 0; row < height; row++)
         {
-            int srcRow = z * volume.SizeY * volume.SizeX + y * volume.SizeX;
-            int dstRow = z * width;
-            Array.Copy(volume.Voxels, srcRow, pixels, dstRow, width);
+            double sourceZ = MapOutputRowToSourceZ(row, height, volume.SizeZ);
+            int dstRow = row * width;
+
+            for (int x = 0; x < width; x++)
+            {
+                pixels[dstRow + x] = (short)Math.Round(volume.GetVoxelInterpolated(x, y, sourceZ));
+            }
         }
 
-        // Coronal slice: horizontal = RowDirection (X), vertical = Normal (Z)
-        Vector3D sliceOrigin = volume.Origin + volume.ColumnDirection * (y * volume.SpacingY);
+        Vector3D sliceOrigin = volume.Origin
+            + volume.ColumnDirection * (y * volume.SpacingY)
+            + volume.Normal * ((volume.SizeZ - 1) * volume.SpacingZ);
 
         var spatial = new DicomSpatialMetadata(
             FilePath: "",
@@ -196,11 +202,11 @@ public static class VolumeReslicer
             FrameOfReferenceUid: "",
             AcquisitionNumber: "",
             width, height,
-            RowSpacing: volume.SpacingZ,
+            RowSpacing: targetSpacingY,
             ColumnSpacing: volume.SpacingX,
             sliceOrigin,
             volume.RowDirection,
-            volume.Normal,
+            volume.Normal * -1,
             volume.ColumnDirection);
 
         return new ReslicedImage
@@ -209,7 +215,7 @@ public static class VolumeReslicer
             Width = width,
             Height = height,
             PixelSpacingX = volume.SpacingX,
-            PixelSpacingY = volume.SpacingZ,
+            PixelSpacingY = targetSpacingY,
             SpatialMetadata = spatial,
         };
     }
@@ -218,19 +224,24 @@ public static class VolumeReslicer
     {
         x = Math.Clamp(x, 0, volume.SizeX - 1);
         int width = volume.SizeY;
-        int height = volume.SizeZ;
+        double targetSpacingY = volume.SpacingY > 0 ? volume.SpacingY : 1.0;
+        int height = GetResampledDepth(volume.SizeZ, volume.SpacingZ, targetSpacingY);
         short[] pixels = new short[width * height];
 
-        for (int z = 0; z < volume.SizeZ; z++)
+        for (int row = 0; row < height; row++)
         {
-            for (int row = 0; row < volume.SizeY; row++)
+            double sourceZ = MapOutputRowToSourceZ(row, height, volume.SizeZ);
+            int dstRow = row * width;
+
+            for (int y = 0; y < width; y++)
             {
-                pixels[z * width + row] = volume.Voxels[z * volume.SizeY * volume.SizeX + row * volume.SizeX + x];
+                pixels[dstRow + y] = (short)Math.Round(volume.GetVoxelInterpolated(x, y, sourceZ));
             }
         }
 
-        // Sagittal slice: horizontal = ColumnDirection (Y), vertical = Normal (Z)
-        Vector3D sliceOrigin = volume.Origin + volume.RowDirection * (x * volume.SpacingX);
+        Vector3D sliceOrigin = volume.Origin
+            + volume.RowDirection * (x * volume.SpacingX)
+            + volume.Normal * ((volume.SizeZ - 1) * volume.SpacingZ);
 
         var spatial = new DicomSpatialMetadata(
             FilePath: "",
@@ -239,11 +250,11 @@ public static class VolumeReslicer
             FrameOfReferenceUid: "",
             AcquisitionNumber: "",
             width, height,
-            RowSpacing: volume.SpacingZ,
+            RowSpacing: targetSpacingY,
             ColumnSpacing: volume.SpacingY,
             sliceOrigin,
             volume.ColumnDirection,
-            volume.Normal,
+            volume.Normal * -1,
             volume.RowDirection);
 
         return new ReslicedImage
@@ -252,9 +263,33 @@ public static class VolumeReslicer
             Width = width,
             Height = height,
             PixelSpacingX = volume.SpacingY,
-            PixelSpacingY = volume.SpacingZ,
+            PixelSpacingY = targetSpacingY,
             SpatialMetadata = spatial,
         };
+    }
+
+    private static int GetResampledDepth(int sliceCount, double sliceSpacing, double targetSpacing)
+    {
+        if (sliceCount <= 1)
+        {
+            return Math.Max(1, sliceCount);
+        }
+
+        double safeSliceSpacing = sliceSpacing > 0 ? sliceSpacing : 1.0;
+        double safeTargetSpacing = targetSpacing > 0 ? targetSpacing : safeSliceSpacing;
+        double physicalDepth = (sliceCount - 1) * safeSliceSpacing;
+        return Math.Max(1, (int)Math.Round(physicalDepth / safeTargetSpacing) + 1);
+    }
+
+    private static double MapOutputRowToSourceZ(int row, int outputHeight, int sourceDepth)
+    {
+        if (outputHeight <= 1 || sourceDepth <= 1)
+        {
+            return Math.Max(0, sourceDepth - 1);
+        }
+
+        double normalized = row / (double)(outputHeight - 1);
+        return (sourceDepth - 1) * (1.0 - normalized);
     }
 
     /// <summary>

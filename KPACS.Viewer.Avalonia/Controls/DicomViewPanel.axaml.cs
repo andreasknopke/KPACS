@@ -97,6 +97,8 @@ public partial class DicomViewPanel : UserControl
     private double _zoomFactor = 1.0;
     private bool _fitToWindow = true;
     private int _colorScheme = 1;
+    private double _displayScaleX = 1.0;
+    private double _displayScaleY = 1.0;
 
     // ==============================================================================================
     // Volume rendering state
@@ -365,12 +367,19 @@ public partial class DicomViewPanel : UserControl
     {
         LastError = null;
 
+        _volume = null;
+        _volumeSlicePixels = null;
+        _volumeSliceIndex = 0;
+        _projectionPointer = null;
+        _isProjectionThicknessDragging = false;
+
         try
         {
             var file = DicomFile.Open(filePath, FellowOakDicom.FileReadOption.ReadAll);
             var dataset = file.Dataset;
             _fileName = filePath;
             SpatialMetadata = DicomSpatialMetadata.FromDataset(dataset, filePath);
+            UpdateDisplayGeometry(SpatialMetadata?.ColumnSpacing ?? 1.0, SpatialMetadata?.RowSpacing ?? 1.0);
 
             // --- Extract image metadata ---
             _imageWidth = dataset.GetSingleValue<int>(DicomTag.Columns);
@@ -452,8 +461,7 @@ public partial class DicomViewPanel : UserControl
                 Avalonia.Platform.PixelFormat.Bgra8888,
                 Avalonia.Platform.AlphaFormat.Opaque);
             DicomImage.Source = _displayBitmap;
-            DicomImage.Width = _imageWidth;
-            DicomImage.Height = _imageHeight;
+            ApplyDisplayImageSize();
             DicomImage.InvalidateMeasure();
 
             // Hide placeholder
@@ -586,10 +594,14 @@ public partial class DicomViewPanel : UserControl
         _displayBitmap = null;
         _imageWidth = 0;
         _imageHeight = 0;
+        _displayScaleX = 1.0;
+        _displayScaleY = 1.0;
         _frameCount = 1;
         _fileName = string.Empty;
         SpatialMetadata = null;
         DicomImage.Source = null;
+        DicomImage.Width = double.NaN;
+        DicomImage.Height = double.NaN;
         PlaceholderText.IsVisible = true;
         Set3DCursorOverlay(null);
         PixelLensPanel.IsVisible = false;
@@ -659,6 +671,8 @@ public partial class DicomViewPanel : UserControl
         _imageWidth = resliced.Width;
         _imageHeight = resliced.Height;
         _frameCount = VolumeReslicer.GetSliceCount(_volume, _volumeOrientation);
+        StackItemCount = _frameCount;
+        UpdateDisplayGeometry(resliced.PixelSpacingX, resliced.PixelSpacingY);
 
         SpatialMetadata = resliced.SpatialMetadata;
         _fileName = SpatialMetadata?.FilePath ?? "";
@@ -680,10 +694,10 @@ public partial class DicomViewPanel : UserControl
                 Avalonia.Platform.PixelFormat.Bgra8888,
                 Avalonia.Platform.AlphaFormat.Opaque);
             DicomImage.Source = _displayBitmap;
-            DicomImage.Width = _imageWidth;
-            DicomImage.Height = _imageHeight;
             DicomImage.InvalidateMeasure();
         }
+
+        ApplyDisplayImageSize();
 
         PlaceholderText.IsVisible = false;
         RenderImage();
@@ -905,8 +919,8 @@ public partial class DicomViewPanel : UserControl
         double canvasHeight = RootGrid.Bounds.Height;
         if (canvasWidth <= 0 || canvasHeight <= 0) return;
 
-        double scaleX = canvasWidth / _imageWidth;
-        double scaleY = canvasHeight / _imageHeight;
+        double scaleX = canvasWidth / GetDisplayWidth();
+        double scaleY = canvasHeight / GetDisplayHeight();
         _zoomFactor = Math.Min(scaleX, scaleY);
 
         _fitToWindow = true;
@@ -1021,8 +1035,8 @@ public partial class DicomViewPanel : UserControl
                 return false;
             }
 
-            double x = (controlCenter.X - _panX) / _zoomFactor;
-            double y = (controlCenter.Y - _panY) / _zoomFactor;
+            double x = DisplayToImageX((controlCenter.X - _panX) / _zoomFactor);
+            double y = DisplayToImageY((controlCenter.Y - _panY) / _zoomFactor);
             centerImagePoint = new Point(x, y);
         }
 
@@ -1092,8 +1106,8 @@ public partial class DicomViewPanel : UserControl
 
         double cx = RootGrid.Bounds.Width / 2.0;
         double cy = RootGrid.Bounds.Height / 2.0;
-        _panX = cx - (state.CenterImagePoint.X * _zoomFactor);
-        _panY = cy - (state.CenterImagePoint.Y * _zoomFactor);
+        _panX = cx - (ImageToDisplayX(state.CenterImagePoint.X) * _zoomFactor);
+        _panY = cy - (ImageToDisplayY(state.CenterImagePoint.Y) * _zoomFactor);
         _panTransform.X = _panX;
         _panTransform.Y = _panY;
         Update3DCursorOverlay();
@@ -1118,8 +1132,8 @@ public partial class DicomViewPanel : UserControl
     {
         double canvasWidth = RootGrid.Bounds.Width;
         double canvasHeight = RootGrid.Bounds.Height;
-        double displayWidth = _imageWidth * _zoomFactor;
-        double displayHeight = _imageHeight * _zoomFactor;
+        double displayWidth = GetDisplayWidth() * _zoomFactor;
+        double displayHeight = GetDisplayHeight() * _zoomFactor;
 
         _panX = (canvasWidth - displayWidth) / 2.0;
         _panY = (canvasHeight - displayHeight) / 2.0;
@@ -1282,8 +1296,8 @@ public partial class DicomViewPanel : UserControl
             return false;
         }
 
-        double x = (controlPoint.X - _panX) / _zoomFactor;
-        double y = (controlPoint.Y - _panY) / _zoomFactor;
+        double x = DisplayToImageX((controlPoint.X - _panX) / _zoomFactor);
+        double y = DisplayToImageY((controlPoint.Y - _panY) / _zoomFactor);
         imagePoint = new Point(x, y);
         return x >= 0 && y >= 0 && x < _imageWidth && y < _imageHeight;
     }
@@ -1298,8 +1312,8 @@ public partial class DicomViewPanel : UserControl
             return;
         }
 
-        double displayX = _panX + (_cursor3DImagePoint.Value.X * _zoomFactor);
-        double displayY = _panY + (_cursor3DImagePoint.Value.Y * _zoomFactor);
+        double displayX = _panX + (ImageToDisplayX(_cursor3DImagePoint.Value.X) * _zoomFactor);
+        double displayY = _panY + (ImageToDisplayY(_cursor3DImagePoint.Value.Y) * _zoomFactor);
 
         Cursor3DHorizontal.StartPoint = new Point(0, displayY);
         Cursor3DHorizontal.EndPoint = new Point(RootGrid.Bounds.Width, displayY);
@@ -1762,14 +1776,77 @@ public partial class DicomViewPanel : UserControl
         return Math.Max(2, (int)Math.Ceiling(200.0 / maxIndex));
     }
 
+    private void UpdateDisplayGeometry(double pixelSpacingX, double pixelSpacingY)
+    {
+        pixelSpacingX = pixelSpacingX > 0 ? pixelSpacingX : 1.0;
+        pixelSpacingY = pixelSpacingY > 0 ? pixelSpacingY : 1.0;
+
+        double spacingBase = Math.Min(pixelSpacingX, pixelSpacingY);
+        if (spacingBase <= 0)
+        {
+            spacingBase = 1.0;
+        }
+
+        _displayScaleX = pixelSpacingX / spacingBase;
+        _displayScaleY = pixelSpacingY / spacingBase;
+    }
+
+    private void ApplyDisplayImageSize()
+    {
+        if (_imageWidth <= 0 || _imageHeight <= 0)
+        {
+            return;
+        }
+
+        DicomImage.Width = GetDisplayWidth();
+        DicomImage.Height = GetDisplayHeight();
+    }
+
+    private double GetDisplayWidth() => _imageWidth * _displayScaleX;
+
+    private double GetDisplayHeight() => _imageHeight * _displayScaleY;
+
+    private double ImageToDisplayX(double imageX) => imageX * _displayScaleX;
+
+    private double ImageToDisplayY(double imageY) => imageY * _displayScaleY;
+
+    private double DisplayToImageX(double displayX) => _displayScaleX <= 0 ? displayX : displayX / _displayScaleX;
+
+    private double DisplayToImageY(double displayY) => _displayScaleY <= 0 ? displayY : displayY / _displayScaleY;
+
     // ==============================================================================================
     // Resize handler
     // ==============================================================================================
 
     private void OnSizeChanged(object? sender, SizeChangedEventArgs e)
     {
-        if (_fitToWindow && _rawPixelData != null)
+        bool hasImage = _rawPixelData != null || _volumeSlicePixels != null;
+        if (!hasImage)
+        {
+            Update3DCursorOverlay();
+            UpdateMeasurementPresentation();
+            UpdateOverlay();
+            return;
+        }
+
+        if (_fitToWindow)
+        {
             ApplyFitToWindow();
+        }
+        else if (_zoomFactor > 0 && e.PreviousSize.Width > 0 && e.PreviousSize.Height > 0)
+        {
+            Point previousCenter = new(e.PreviousSize.Width / 2.0, e.PreviousSize.Height / 2.0);
+            Point centerImagePoint = new(
+                DisplayToImageX((previousCenter.X - _panX) / _zoomFactor),
+                DisplayToImageY((previousCenter.Y - _panY) / _zoomFactor));
+
+            double newCenterX = e.NewSize.Width / 2.0;
+            double newCenterY = e.NewSize.Height / 2.0;
+            _panX = newCenterX - (ImageToDisplayX(centerImagePoint.X) * _zoomFactor);
+            _panY = newCenterY - (ImageToDisplayY(centerImagePoint.Y) * _zoomFactor);
+            _panTransform.X = _panX;
+            _panTransform.Y = _panY;
+        }
 
         Update3DCursorOverlay();
         UpdateMeasurementPresentation();

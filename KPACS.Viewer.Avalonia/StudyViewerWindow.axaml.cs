@@ -935,6 +935,8 @@ public partial class StudyViewerWindow : Window
         if (_activeSlot.Volume is null)
             RequestSeriesPriority(series, _activeSlot.InstanceIndex);
         LoadSlot(_activeSlot);
+        if (_activeSlot.Volume is null)
+            _ = EnsureVolumeLoadedForSlotAsync(_activeSlot, series);
         UpdateStatus();
     }
 
@@ -1042,8 +1044,42 @@ public partial class StudyViewerWindow : Window
         if (slot.Volume is null)
             RequestSeriesPriority(series, slot.InstanceIndex);
         LoadSlot(slot);
+        if (slot.Volume is null)
+            _ = EnsureVolumeLoadedForSlotAsync(slot, series);
         SynchronizeLinkedViews(_activeSlot ?? slot);
         UpdateStatus();
+    }
+
+    private async Task EnsureVolumeLoadedForSlotAsync(ViewportSlot slot, SeriesRecord series)
+    {
+        string seriesUid = series.SeriesInstanceUid;
+
+        if (_volumeCache.TryGetValue(seriesUid, out SeriesVolume? cachedVolume))
+        {
+            if (cachedVolume is not null && ReferenceEquals(slot.Series, series))
+            {
+                await Dispatcher.UIThread.InvokeAsync(() => ApplyVolumeToSlot(slot, cachedVolume));
+            }
+
+            return;
+        }
+
+        var volumeLoader = new VolumeLoaderService();
+
+        try
+        {
+            SeriesVolume? volume = await volumeLoader.TryLoadVolumeAsync(series);
+            _volumeCache[seriesUid] = volume;
+
+            if (volume is not null && ReferenceEquals(slot.Series, series))
+            {
+                await Dispatcher.UIThread.InvokeAsync(() => ApplyVolumeToSlot(slot, volume));
+            }
+        }
+        catch
+        {
+            _volumeCache[seriesUid] = null;
+        }
     }
 
     private void SynchronizeLinkedViews(ViewportSlot? sourceSlot)

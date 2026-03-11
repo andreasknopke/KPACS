@@ -113,7 +113,7 @@
 
             <Border x:Name="ProjectionBadge"
                 Background="#D0151515"
-                BorderBrush="#80FFFFDD00"
+                BorderBrush="#80FFDD00"
                 BorderThickness="1"
                 CornerRadius="4"
                 Padding="8,4"

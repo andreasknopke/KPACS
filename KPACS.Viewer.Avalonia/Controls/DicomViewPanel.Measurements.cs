@@ -976,7 +976,7 @@ public partial class DicomViewPanel
         return true;
     }
 
-    private Point ImageToControlPoint(Point imagePoint) => new(_panX + (imagePoint.X * _zoomFactor), _panY + (imagePoint.Y * _zoomFactor));
+    private Point ImageToControlPoint(Point imagePoint) => new(_panX + (ImageToDisplayX(imagePoint.X) * _zoomFactor), _panY + (ImageToDisplayY(imagePoint.Y) * _zoomFactor));
 
     private Point ClampImagePoint(Point imagePoint) =>
         new(
