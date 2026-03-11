@@ -1,6 +1,6 @@
 # KPACS Share Relay
 
-Prototype HTTPS relay for asynchronous IQ-VIEW/KPACS study sharing.
+Prototype HTTPS relay for asynchronous KPACS study sharing.
 
 ## MVP scope
 
