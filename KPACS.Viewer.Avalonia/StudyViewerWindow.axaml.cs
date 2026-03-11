@@ -25,6 +25,7 @@ public partial class StudyViewerWindow : Window
     private readonly ObservableCollection<ToastNotificationItem> _toastNotifications = [];
     private readonly CancellationTokenSource _priorLookupCancellation = new();
     private readonly DispatcherTimer _actionToolbarHideTimer = new();
+    private CancellationTokenSource? _adjacentPriorityDebounceCancellation;
     private readonly string? _viewerSettingsPath;
     private IReadOnlyList<PriorStudySummary> _priorStudies = [];
     private PriorStudySummary? _selectedPriorStudy;
@@ -40,6 +41,7 @@ public partial class StudyViewerWindow : Window
     private bool _isPriorPreviewLoading;
     private bool _isSynchronizingLinkedViews;
     private string _thumbnailStripMessage = string.Empty;
+    private const int AdjacentPriorityDebounceMs = 180;
 
     public StudyViewerWindow(ViewerStudyContext context)
     {
@@ -161,7 +163,7 @@ public partial class StudyViewerWindow : Window
         UpdateStatus();
     }
 
-    private void LoadSlot(ViewportSlot slot)
+    private void LoadSlot(ViewportSlot slot, bool refreshThumbnailStrip = true)
     {
         if (slot.Series is null || slot.Series.Instances.Count == 0)
         {
@@ -178,7 +180,7 @@ public partial class StudyViewerWindow : Window
             slot.CurrentSpatialMetadata = null;
             slot.Panel.ClearImage();
             RequestSlotPriority(slot);
-            if (ReferenceEquals(slot, _activeSlot))
+            if (refreshThumbnailStrip && ReferenceEquals(slot, _activeSlot))
             {
                 RefreshThumbnailStrip(slot.Series);
             }
@@ -207,7 +209,7 @@ public partial class StudyViewerWindow : Window
             slot.ViewState = slot.Panel.CaptureDisplayState();
         }
 
-        if (ReferenceEquals(slot, _activeSlot))
+        if (refreshThumbnailStrip && ReferenceEquals(slot, _activeSlot))
         {
             RefreshThumbnailStrip(slot.Series);
         }
@@ -225,12 +227,21 @@ public partial class StudyViewerWindow : Window
         }
     }
 
-    private void SetActiveSlot(ViewportSlot? slot)
+    private void SetActiveSlot(ViewportSlot? slot, bool requestPriority = true)
     {
+        if (ReferenceEquals(_activeSlot, slot))
+        {
+            return;
+        }
+
         _activeSlot = slot;
         UpdateSlotVisualStates();
         RefreshThumbnailStrip(slot?.Series);
-        RequestSlotPriority(slot);
+        if (requestPriority)
+        {
+            RequestSlotPriority(slot);
+        }
+
         UpdateStatus();
     }
 
@@ -274,10 +285,14 @@ public partial class StudyViewerWindow : Window
             return;
         }
 
-        SetActiveSlot(slot);
+        if (!ReferenceEquals(_activeSlot, slot))
+        {
+            SetActiveSlot(slot, requestPriority: false);
+        }
+
         slot.InstanceIndex = Math.Clamp(slot.InstanceIndex + delta, 0, GetSeriesTotalCount(slot.Series) - 1);
         RequestSlotPriority(slot, Math.Sign(delta));
-        LoadSlot(slot);
+        LoadSlot(slot, refreshThumbnailStrip: false);
         UpdateStatus();
     }
 
@@ -322,7 +337,7 @@ public partial class StudyViewerWindow : Window
 
         _activeSlot.InstanceIndex = Math.Clamp(_activeSlot.InstanceIndex + delta, 0, GetSeriesTotalCount(_activeSlot.Series) - 1);
         RequestSlotPriority(_activeSlot, Math.Sign(delta));
-        LoadSlot(_activeSlot);
+        LoadSlot(_activeSlot, refreshThumbnailStrip: false);
         UpdateStatus();
     }
 
@@ -1216,7 +1231,44 @@ public partial class StudyViewerWindow : Window
         }
 
         _ = _remoteRetrievalSession.PrioritizeSeriesAsync(slot.Series.SeriesInstanceUid, slot.InstanceIndex, 6, direction);
-        _ = _remoteRetrievalSession.PrioritizeAdjacentSeriesAsync(slot.Series.SeriesInstanceUid, 1);
+        if (direction == 0)
+        {
+            _ = _remoteRetrievalSession.PrioritizeAdjacentSeriesAsync(slot.Series.SeriesInstanceUid, 1);
+            return;
+        }
+
+        QueueAdjacentSeriesPriority(slot.Series.SeriesInstanceUid);
+    }
+
+    private void QueueAdjacentSeriesPriority(string seriesInstanceUid)
+    {
+        if (_remoteRetrievalSession is null || string.IsNullOrWhiteSpace(seriesInstanceUid))
+        {
+            return;
+        }
+
+        _adjacentPriorityDebounceCancellation?.Cancel();
+        _adjacentPriorityDebounceCancellation?.Dispose();
+
+        var cancellation = new CancellationTokenSource();
+        _adjacentPriorityDebounceCancellation = cancellation;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(AdjacentPriorityDebounceMs, cancellation.Token);
+                if (cancellation.IsCancellationRequested || _remoteRetrievalSession is null)
+                {
+                    return;
+                }
+
+                _ = _remoteRetrievalSession.PrioritizeAdjacentSeriesAsync(seriesInstanceUid, 1, cancellation.Token);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }, cancellation.Token);
     }
 
     private void RequestSeriesThumbnail(SeriesRecord series, int focusIndex)
@@ -1284,6 +1336,9 @@ public partial class StudyViewerWindow : Window
         CancelPriorPreviewLoad();
         _priorLookupCancellation.Cancel();
         _priorLookupCancellation.Dispose();
+        _adjacentPriorityDebounceCancellation?.Cancel();
+        _adjacentPriorityDebounceCancellation?.Dispose();
+        _adjacentPriorityDebounceCancellation = null;
         Opened -= OnViewerOpened;
 
         if (_remoteRetrievalSession is not null)
