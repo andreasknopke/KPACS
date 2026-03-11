@@ -17,6 +17,7 @@ namespace KPACS.Viewer;
 
 public partial class MainWindow : Window
 {
+    private const int CurrentOnboardingVersion = 1;
     private const double DefaultPatientPaneWidth = 320;
     private const double MinPatientPaneWidth = 240;
     private const double MaxPatientPaneWidth = 520;
@@ -39,13 +40,19 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<SeriesGridRow> _seriesRows = [];
     private readonly ObservableCollection<FilesystemFolderNode> _filesystemRoots = [];
     private readonly ObservableCollection<ToastNotificationItem> _toastNotifications = [];
+    private readonly IReadOnlyList<OnboardingStep> _onboardingSteps = CreateOnboardingSteps();
     private readonly string _browserLayoutSettingsPath;
     private string? _filesystemRootPath;
     private string? _lastScannedFolderPath;
     private bool _lastScanPreferDicomDir;
     private string? _lastStorageScpToastMessage;
     private bool _filesystemScanInProgress;
+    private bool _onboardingVisible;
     private int _networkInfoRefreshVersion;
+    private int _databaseInfoRefreshVersion;
+    private int _onboardingCompletedVersion;
+    private int _onboardingDismissedVersion;
+    private int _onboardingStepIndex;
     private double _patientPaneWidth = DefaultPatientPaneWidth;
     private double _seriesPaneHeight = DefaultSeriesPaneHeight;
     private int _viewerWindowCount = 1;
@@ -78,6 +85,7 @@ public partial class MainWindow : Window
         BrowserModeTabs.SelectedIndex = GetBrowserModeTabIndex(_browserMode);
         ViewerWindowCountComboBox.SelectedIndex = Math.Clamp(_viewerWindowCount, 1, 4) - 1;
         _ = RefreshNetworkInfoPanelAsync();
+        _ = RefreshDatabaseInfoPanelAsync();
         UpdateModeUi();
 
         if (_browserMode == BrowserMode.Filesystem)
@@ -87,6 +95,7 @@ public partial class MainWindow : Window
 
         RefreshBackgroundJobsPanel();
         await RefreshCurrentModeAsync();
+        await MaybeStartOnboardingAsync();
     }
 
     private async Task RefreshCurrentModeAsync(string? statusOverride = null, bool applySearchFilters = true, bool userInitiated = false)
@@ -104,6 +113,136 @@ public partial class MainWindow : Window
                 break;
             case BrowserMode.Email:
                 ClearStudyResults("Email mode", statusOverride ?? "Email mode is not implemented yet.");
+                break;
+        }
+    }
+
+    private async Task MaybeStartOnboardingAsync()
+    {
+        if (_onboardingCompletedVersion >= CurrentOnboardingVersion || _onboardingDismissedVersion >= CurrentOnboardingVersion)
+        {
+            return;
+        }
+
+        await Task.Delay(250);
+        await ShowOnboardingAsync(0, showToast: true);
+    }
+
+    private async Task SetBrowserModeAsync(BrowserMode mode)
+    {
+        int targetIndex = GetBrowserModeTabIndex(mode);
+        if (BrowserModeTabs is not null && BrowserModeTabs.SelectedIndex != targetIndex)
+        {
+            BrowserModeTabs.SelectedIndex = targetIndex;
+            await Task.Yield();
+            return;
+        }
+
+        _browserMode = mode;
+        SaveBrowserLayoutSettings();
+        UpdateModeUi();
+
+        if (_browserMode == BrowserMode.Filesystem && _filesystemRoots.Count == 0)
+        {
+            await EnsureFilesystemRootLoadedAsync();
+        }
+
+        await RefreshCurrentModeAsync();
+    }
+
+    private async Task ShowOnboardingAsync(int stepIndex, bool showToast)
+    {
+        if (_onboardingSteps.Count == 0
+            || OnboardingOverlay is null
+            || OnboardingStepText is null
+            || OnboardingModeBadge is null
+            || OnboardingModeBadgeText is null
+            || OnboardingTitleText is null
+            || OnboardingSummaryText is null
+            || OnboardingTipsText is null
+            || OnboardingHintText is null
+            || OnboardingPrimaryActionButton is null
+            || OnboardingPreviousButton is null
+            || OnboardingNextButton is null)
+        {
+            return;
+        }
+
+        _onboardingStepIndex = Math.Clamp(stepIndex, 0, _onboardingSteps.Count - 1);
+        OnboardingStep step = _onboardingSteps[_onboardingStepIndex];
+
+        if (step.Mode is BrowserMode mode)
+        {
+            await SetBrowserModeAsync(mode);
+        }
+
+        _onboardingVisible = true;
+        OnboardingOverlay.IsVisible = true;
+        OnboardingStepText.Text = $"Step {_onboardingStepIndex + 1} of {_onboardingSteps.Count}";
+        OnboardingModeBadge.IsVisible = !string.IsNullOrWhiteSpace(step.Badge);
+        OnboardingModeBadgeText.Text = step.Badge;
+        OnboardingTitleText.Text = step.Title;
+        OnboardingSummaryText.Text = step.Summary;
+        OnboardingTipsText.Text = string.Join(Environment.NewLine, step.Bullets.Select(bullet => $"• {bullet}"));
+        OnboardingHintText.Text = step.Hint;
+        OnboardingPrimaryActionButton.IsVisible = step.PrimaryAction != OnboardingPrimaryAction.None;
+        OnboardingPrimaryActionButton.Content = step.PrimaryActionLabel ?? "Try it";
+        OnboardingPreviousButton.IsEnabled = _onboardingStepIndex > 0;
+        OnboardingNextButton.Content = _onboardingStepIndex == _onboardingSteps.Count - 1 ? "Finish" : "Next";
+
+        SetStatus(step.StatusText);
+        if (showToast && !string.IsNullOrWhiteSpace(step.ToastMessage))
+        {
+            ShowToast(step.ToastMessage, ToastSeverity.Info, TimeSpan.FromSeconds(7));
+        }
+    }
+
+    private void HideOnboarding(bool completed)
+    {
+        _onboardingVisible = false;
+        if (OnboardingOverlay is not null)
+        {
+            OnboardingOverlay.IsVisible = false;
+        }
+
+        if (completed)
+        {
+            _onboardingCompletedVersion = CurrentOnboardingVersion;
+            SetStatus("Onboarding finished. Use Guide any time to replay the tour.");
+            ShowToast("Onboarding finished. Use Guide any time to replay the tour.", ToastSeverity.Success, TimeSpan.FromSeconds(5));
+        }
+        else
+        {
+            _onboardingDismissedVersion = CurrentOnboardingVersion;
+            SetStatus("Onboarding skipped for now. Use Guide any time to reopen it.");
+        }
+
+        SaveBrowserLayoutSettings();
+    }
+
+    private async Task RunOnboardingPrimaryActionAsync()
+    {
+        OnboardingStep step = _onboardingSteps[_onboardingStepIndex];
+        switch (step.PrimaryAction)
+        {
+            case OnboardingPrimaryAction.OpenNetworkConfiguration:
+                await OpenNetworkConfigurationAsync(allowModeSwitch: true);
+                break;
+
+            case OnboardingPrimaryAction.ChooseFilesystemRoot:
+                await BrowseFilesystemRootAsync(allowModeSwitch: true);
+                break;
+
+            case OnboardingPrimaryAction.OpenSelectedStudy:
+                await SetBrowserModeAsync(BrowserMode.Database);
+                if (GetSelectedStudies().Count != 1)
+                {
+                    SetStatus("Select one study in Database mode, then use View or double-click it.");
+                    ShowToast("Select one study in Database mode, then use View or double-click it.", ToastSeverity.Warning, TimeSpan.FromSeconds(6));
+                    return;
+                }
+
+                await OpenSelectedStudyAsync();
                 break;
         }
     }
@@ -632,12 +771,17 @@ public partial class MainWindow : Window
 
     private async void OnSearchClick(object? sender, RoutedEventArgs e) => await RefreshCurrentModeAsync(userInitiated: true);
 
-    private async void OnConfigClick(object? sender, RoutedEventArgs e)
+    private async Task OpenNetworkConfigurationAsync(bool allowModeSwitch)
     {
         if (_browserMode != BrowserMode.Network)
         {
-            StatusText.Text = "Configuration is currently only implemented for Network mode.";
-            return;
+            if (!allowModeSwitch)
+            {
+                StatusText.Text = "Configuration is currently only implemented for Network mode.";
+                return;
+            }
+
+            await SetBrowserModeAsync(BrowserMode.Network);
         }
 
         var window = new NetworkSettingsWindow(_app.NetworkSettingsService.CurrentSettings);
@@ -649,19 +793,61 @@ public partial class MainWindow : Window
 
         await _app.NetworkSettingsService.SaveAsync(updatedSettings);
         _ = RefreshNetworkInfoPanelAsync();
-        await RefreshCurrentModeAsync($"Saved network configuration. Storage SCP restarted on port {updatedSettings.LocalPort}. DICOM trace logging {(updatedSettings.EnableDicomCommunicationLogging ? "enabled" : "disabled")}.");
+        await RefreshCurrentModeAsync($"Saved network configuration. Storage SCP restarted on port {updatedSettings.LocalPort}. DICOM trace logging {(updatedSettings.EnableDicomCommunicationLogging ? "enabled" : "disabled")}." );
     }
+
+    private async void OnConfigClick(object? sender, RoutedEventArgs e) => await OpenNetworkConfigurationAsync(allowModeSwitch: false);
 
     private async void OnInfoClick(object? sender, RoutedEventArgs e)
     {
+        if (_browserMode == BrowserMode.Database)
+        {
+            bool dbExists = File.Exists(_app.Paths.DatabasePath);
+            long dbSize = dbExists ? new FileInfo(_app.Paths.DatabasePath).Length : 0;
+            int studyCount = 0;
+            try
+            {
+                studyCount = (await _app.Repository.SearchStudiesAsync(new StudyQuery())).Count;
+            }
+            catch
+            {
+                studyCount = 0;
+            }
+
+            DriveHealth driveHealth = GetDriveHealth(_app.Paths.DatabasePath, _app.NetworkSettingsService.CurrentSettings.InboxDirectory);
+            string databaseInfo = $"Database file: {_app.Paths.DatabasePath}\n"
+                + $"Present: {(dbExists ? "Yes" : "No")}\n"
+                + $"Size: {(dbExists ? FormatFileSize(dbSize) : "-")}\n"
+                + $"Indexed studies: {studyCount}\n\n"
+                + $"Drive health: {driveHealth.Label}\n"
+                + $"{driveHealth.PrimaryText}\n"
+                + $"{driveHealth.SecondaryText}";
+
+            await new NetworkInfoWindow("Database Information", databaseInfo).ShowDialog(this);
+            return;
+        }
+
+        if (_browserMode == BrowserMode.Filesystem)
+        {
+            IReadOnlyList<BackgroundJobInfo> importJobs = _app.BackgroundJobs.GetJobsSnapshot()
+                .Where(job => job.JobType == BackgroundJobType.Import)
+                .ToList();
+            int activeImports = importJobs.Count(job => job.State is BackgroundJobState.Queued or BackgroundJobState.Running);
+
+            string filesystemInfo = $"Last scanned folder: {_lastScannedFolderPath ?? "<none>"}\n"
+                + $"Scan in progress: {(_filesystemScanInProgress ? "Yes" : "No")}\n"
+                + $"Preview studies loaded: {_filesystemPreviewDetails.Count}\n"
+                + $"Import jobs tracked: {importJobs.Count}\n"
+                + $"Active import jobs: {activeImports}\n"
+                + $"Last scan mode: {(_lastScanPreferDicomDir ? "DICOMDIR preferred" : "Recursive file scan")}";
+
+            await new NetworkInfoWindow("Filesystem Information", filesystemInfo).ShowDialog(this);
+            return;
+        }
+
         if (_browserMode != BrowserMode.Network)
         {
-            StatusText.Text = _browserMode switch
-            {
-                BrowserMode.Database => "Database mode uses the local SQLite-backed K-PACS imagebox.",
-                BrowserMode.Filesystem => "Filesystem mode scans folders or DICOMDIR media before import.",
-                _ => "No additional information is available for this mode yet.",
-            };
+            StatusText.Text = "No additional information is available for this mode yet.";
             return;
         }
 
@@ -692,6 +878,51 @@ public partial class MainWindow : Window
         SaveBrowserLayoutSettings();
         UpdateModeUi();
         await RefreshCurrentModeAsync(userInitiated: true);
+    }
+
+    private async void OnGuideClick(object? sender, RoutedEventArgs e)
+    {
+        _onboardingDismissedVersion = 0;
+        await ShowOnboardingAsync(0, showToast: true);
+    }
+
+    private void OnOnboardingSkipClick(object? sender, RoutedEventArgs e) => HideOnboarding(completed: false);
+
+    private async void OnOnboardingPreviousClick(object? sender, RoutedEventArgs e)
+    {
+        if (_onboardingStepIndex == 0)
+        {
+            return;
+        }
+
+        await ShowOnboardingAsync(_onboardingStepIndex - 1, showToast: false);
+    }
+
+    private async void OnOnboardingNextClick(object? sender, RoutedEventArgs e)
+    {
+        if (_onboardingStepIndex >= _onboardingSteps.Count - 1)
+        {
+            HideOnboarding(completed: true);
+            return;
+        }
+
+        await ShowOnboardingAsync(_onboardingStepIndex + 1, showToast: true);
+    }
+
+    private async void OnOnboardingPrimaryActionClick(object? sender, RoutedEventArgs e) => await RunOnboardingPrimaryActionAsync();
+
+    private void OnOnboardingToastClick(object? sender, RoutedEventArgs e)
+    {
+        if (!_onboardingVisible || _onboardingStepIndex < 0 || _onboardingStepIndex >= _onboardingSteps.Count)
+        {
+            return;
+        }
+
+        string toastMessage = _onboardingSteps[_onboardingStepIndex].ToastMessage;
+        if (!string.IsNullOrWhiteSpace(toastMessage))
+        {
+            ShowToast(toastMessage, ToastSeverity.Info, TimeSpan.FromSeconds(7));
+        }
     }
 
     private async void OnTodayClick(object? sender, RoutedEventArgs e)
@@ -854,12 +1085,17 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnBrowseFilesystemRootClick(object? sender, RoutedEventArgs e)
+    private async Task BrowseFilesystemRootAsync(bool allowModeSwitch)
     {
         if (_browserMode != BrowserMode.Filesystem)
         {
-            SetStatus("Browse is available in Filesystem mode.");
-            return;
+            if (!allowModeSwitch)
+            {
+                SetStatus("Browse is available in Filesystem mode.");
+                return;
+            }
+
+            await SetBrowserModeAsync(BrowserMode.Filesystem);
         }
 
         TopLevel? topLevel = TopLevel.GetTopLevel(this);
@@ -882,6 +1118,8 @@ public partial class MainWindow : Window
 
         await LoadFilesystemRootAsync(path);
     }
+
+    private async void OnBrowseFilesystemRootClick(object? sender, RoutedEventArgs e) => await BrowseFilesystemRootAsync(allowModeSwitch: false);
 
     private async Task LoadFilesystemRootAsync(string path)
     {
@@ -1419,6 +1657,7 @@ public partial class MainWindow : Window
     {
         RefreshBackgroundJobsPanel();
         _ = RefreshNetworkInfoPanelAsync();
+        _ = RefreshDatabaseInfoPanelAsync();
     }
 
     private void RefreshBackgroundJobsPanel()
@@ -1428,7 +1667,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        IReadOnlyList<BackgroundJobInfo> jobs = _app.BackgroundJobs.GetJobsSnapshot();
+        IReadOnlyList<BackgroundJobInfo> jobs = _app.BackgroundJobs.GetJobsSnapshot()
+            .Where(job => job.JobType == BackgroundJobType.Import)
+            .ToList();
         List<BackgroundJobInfo> recentJobs = jobs.Take(12).ToList();
 
         _backgroundJobs.Clear();
@@ -1448,10 +1689,10 @@ public partial class MainWindow : Window
         int activeJobs = jobs.Count(job => job.State is BackgroundJobState.Queued or BackgroundJobState.Running);
         int failedJobs = jobs.Count(job => job.State == BackgroundJobState.Failed);
         BackgroundJobsSummaryText.Text = jobs.Count == 0
-            ? "No background import or send jobs have been queued yet."
+            ? "No filesystem import jobs have been queued yet."
             : failedJobs > 0
-                ? $"{activeJobs} active jobs, {failedJobs} failed jobs. Select a row to inspect its log."
-                : $"{activeJobs} active jobs. Select a row to inspect its log or open the DICOM trace.";
+                ? $"{activeJobs} active import jobs, {failedJobs} failed imports. Select a row to inspect its log."
+                : $"{activeJobs} active import jobs. Select a row to inspect its log.";
     }
 
     private async void OnViewBackgroundJobLogClick(object? sender, RoutedEventArgs e)
@@ -1546,18 +1787,10 @@ public partial class MainWindow : Window
             || RemoteArchiveSecondaryText is null
             || RemoteArchiveBadge is null
             || RemoteArchiveBadgeText is null
-            || LocalDatabasePrimaryText is null
-            || LocalDatabaseSecondaryText is null
-            || LocalDatabaseBadge is null
-            || LocalDatabaseBadgeText is null
             || StorageScpPrimaryText is null
             || StorageScpSecondaryText is null
             || StorageScpBadge is null
             || StorageScpBadgeText is null
-            || DiskHealthPrimaryText is null
-            || DiskHealthSecondaryText is null
-            || DiskHealthBadge is null
-            || DiskHealthBadgeText is null
             || NetworkConfigurationHintBorder is null
             || NetworkConfigurationHintText is null)
         {
@@ -1581,36 +1814,11 @@ public partial class MainWindow : Window
             ? "Use Configure to add the endpoint."
             : "Testing reachability...";
 
-        bool localDbExists = File.Exists(_app.Paths.DatabasePath);
-        var dbInfo = new FileInfo(_app.Paths.DatabasePath);
-        int localStudyCount = 0;
-        try
-        {
-            localStudyCount = (await _app.Repository.SearchStudiesAsync(new StudyQuery())).Count;
-        }
-        catch
-        {
-            localStudyCount = 0;
-        }
-
-        ApplyHealthBadge(LocalDatabaseBadge, LocalDatabaseBadgeText, localDbExists ? "Healthy" : "Missing", localDbExists ? HealthTone.Success : HealthTone.Error);
-        LocalDatabasePrimaryText.Text = localDbExists
-            ? $"{localStudyCount} studies • {FormatFileSize(dbInfo.Length)} • {Path.GetFileName(_app.Paths.DatabasePath)}"
-            : "Database file not found.";
-        LocalDatabaseSecondaryText.Text = localDbExists
-            ? $"Updated {dbInfo.LastWriteTime:dd.MM.yy HH:mm} • {CompactPath(_app.Paths.DatabasePath)}"
-            : CompactPath(_app.Paths.DatabasePath);
-
         bool scpRunning = _app.StorageScpService.IsRunning;
         string scpStatus = _app.StorageScpService.LastStatus;
         ApplyHealthBadge(StorageScpBadge, StorageScpBadgeText, scpRunning ? "Listening" : "Stopped", scpRunning ? HealthTone.Success : HealthTone.Warning);
         StorageScpPrimaryText.Text = $"AE {settings.LocalAeTitle} • Port {settings.LocalPort} • {_app.StorageScpService.ReceivedFiles} received files";
         StorageScpSecondaryText.Text = $"Inbox {CompactPath(settings.InboxDirectory)} • Trace {(settings.EnableDicomCommunicationLogging ? "On" : "Off")} • {CompactStatus(scpStatus)}";
-
-        DriveHealth diskHealth = GetDriveHealth(_app.Paths.DatabasePath, settings.InboxDirectory);
-        ApplyHealthBadge(DiskHealthBadge, DiskHealthBadgeText, diskHealth.Label, diskHealth.Tone);
-        DiskHealthPrimaryText.Text = diskHealth.PrimaryText;
-        DiskHealthSecondaryText.Text = diskHealth.SecondaryText;
 
         if (archive is null)
         {
@@ -1627,6 +1835,52 @@ public partial class MainWindow : Window
         RemoteArchiveSecondaryText.Text = reachable
             ? $"Reachable • {CompactStatus(detail)}"
             : $"Unreachable • {CompactStatus(detail)}";
+    }
+
+    private async Task RefreshDatabaseInfoPanelAsync()
+    {
+        if (LocalDatabasePrimaryText is null
+            || LocalDatabaseSecondaryText is null
+            || LocalDatabaseBadge is null
+            || LocalDatabaseBadgeText is null
+            || DiskHealthPrimaryText is null
+            || DiskHealthSecondaryText is null
+            || DiskHealthBadge is null
+            || DiskHealthBadgeText is null)
+        {
+            return;
+        }
+
+        int refreshVersion = Interlocked.Increment(ref _databaseInfoRefreshVersion);
+        bool localDbExists = File.Exists(_app.Paths.DatabasePath);
+        FileInfo? dbInfo = localDbExists ? new FileInfo(_app.Paths.DatabasePath) : null;
+        int localStudyCount;
+        try
+        {
+            localStudyCount = (await _app.Repository.SearchStudiesAsync(new StudyQuery())).Count;
+        }
+        catch
+        {
+            localStudyCount = 0;
+        }
+
+        if (refreshVersion != _databaseInfoRefreshVersion)
+        {
+            return;
+        }
+
+        ApplyHealthBadge(LocalDatabaseBadge, LocalDatabaseBadgeText, localDbExists ? "Healthy" : "Missing", localDbExists ? HealthTone.Success : HealthTone.Error);
+        LocalDatabasePrimaryText.Text = localDbExists && dbInfo is not null
+            ? $"{localStudyCount} studies • {FormatFileSize(dbInfo.Length)} • {Path.GetFileName(_app.Paths.DatabasePath)}"
+            : "Database file not found.";
+        LocalDatabaseSecondaryText.Text = localDbExists && dbInfo is not null
+            ? $"Updated {dbInfo.LastWriteTime:dd.MM.yy HH:mm} • {CompactPath(_app.Paths.DatabasePath)}"
+            : CompactPath(_app.Paths.DatabasePath);
+
+        DriveHealth diskHealth = GetDriveHealth(_app.Paths.DatabasePath, _app.NetworkSettingsService.CurrentSettings.InboxDirectory);
+        ApplyHealthBadge(DiskHealthBadge, DiskHealthBadgeText, diskHealth.Label, diskHealth.Tone);
+        DiskHealthPrimaryText.Text = diskHealth.PrimaryText;
+        DiskHealthSecondaryText.Text = diskHealth.SecondaryText;
     }
 
     private static (bool reachable, string detail) SetConnectivityResult(bool reachable, string detail) => (reachable, detail);
@@ -2018,6 +2272,8 @@ public partial class MainWindow : Window
                 _browserMode = settings.LastBrowserMode;
                 _filesystemRootPath = string.IsNullOrWhiteSpace(settings.FilesystemRootPath) ? null : settings.FilesystemRootPath;
                 _viewerWindowCount = Math.Clamp(settings.ViewerWindowCount, 1, 4);
+                _onboardingCompletedVersion = Math.Max(0, settings.OnboardingCompletedVersion);
+                _onboardingDismissedVersion = Math.Max(0, settings.OnboardingDismissedVersion);
             }
         }
         catch
@@ -2028,6 +2284,8 @@ public partial class MainWindow : Window
             _browserMode = BrowserMode.Database;
             _filesystemRootPath = null;
             _viewerWindowCount = 1;
+            _onboardingCompletedVersion = 0;
+            _onboardingDismissedVersion = 0;
         }
     }
 
@@ -2044,6 +2302,8 @@ public partial class MainWindow : Window
                 LastBrowserMode = _browserMode,
                 FilesystemRootPath = _filesystemRootPath,
                 ViewerWindowCount = Math.Clamp(_viewerWindowCount, 1, 4),
+                OnboardingCompletedVersion = _onboardingCompletedVersion,
+                OnboardingDismissedVersion = _onboardingDismissedVersion,
             };
 
             File.WriteAllText(_browserLayoutSettingsPath, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
@@ -2306,6 +2566,164 @@ public partial class MainWindow : Window
         Email,
     }
 
+    private enum OnboardingPrimaryAction
+    {
+        None,
+        OpenNetworkConfiguration,
+        ChooseFilesystemRoot,
+        OpenSelectedStudy,
+    }
+
+    private sealed record OnboardingStep(
+        string Badge,
+        string Title,
+        string Summary,
+        string[] Bullets,
+        string Hint,
+        string ToastMessage,
+        string StatusText,
+        BrowserMode? Mode,
+        OnboardingPrimaryAction PrimaryAction = OnboardingPrimaryAction.None,
+        string? PrimaryActionLabel = null);
+
+    private static IReadOnlyList<OnboardingStep> CreateOnboardingSteps() =>
+    [
+        new(
+            Badge: "Welcome",
+            Title: "Get oriented in a few steps",
+            Summary: "K-PACS lets you query remote archives, import from folders, review studies, change display settings in the viewer, delete local studies, pseudonymize datasets, and send data back out.",
+            Bullets:
+            [
+                "Use the top mode tabs to switch between Network, Database, and Filesystem workflows.",
+                "Use the left Actions column for View, Send, Modify, and this Guide button.",
+                "Nothing changes until you explicitly search, import, send, delete, or pseudonymize a study."
+            ],
+            Hint: "The tour follows the normal workflow from connection setup to import, viewing, cleanup, and anonymization.",
+            ToastMessage: "Welcome to K-PACS. This tour walks through the core workflow and can be reopened with Guide.",
+            StatusText: "Welcome to K-PACS. The onboarding tour is ready.",
+            Mode: null),
+        new(
+            Badge: "Network",
+            Title: "Set up the DICOM connection first",
+            Summary: "Remote archive access and DICOM send require the local AE title, listening port, archive host, and remote AE title to be configured correctly.",
+            Bullets:
+            [
+                "Open Network mode and click Cfg to edit the DICOM connection.",
+                "Set the local AE title and local port used by Storage SCP / Inbox.",
+                "Add or select a remote archive endpoint before searching or sending."
+            ],
+            Hint: "Use the network health cards to confirm archive reachability and whether the Storage SCP is listening.",
+            ToastMessage: "Start in Network mode: configure the local AE, port, and remote archive before querying or sending studies.",
+            StatusText: "Onboarding: configure the DICOM connection in Network mode.",
+            Mode: BrowserMode.Network,
+            PrimaryAction: OnboardingPrimaryAction.OpenNetworkConfiguration,
+            PrimaryActionLabel: "Open DICOM setup"),
+        new(
+            Badge: "Network",
+            Title: "Search and retrieve remote studies",
+            Summary: "Use the search filters to query the remote archive, then open one result or queue it for retrieval into the local imagebox.",
+            Bullets:
+            [
+                "Enter at least one filter such as patient name, ID, study date, accession number, or modality.",
+                "Click Search to query the configured remote archive.",
+                "Select a result and use View to open it or Send after it is stored locally."
+            ],
+            Hint: "The status bar and toasts explain whether a query was empty, successful, or blocked by missing filters.",
+            ToastMessage: "Remote querying uses the filters on the left. Enter at least one filter before pressing Search.",
+            StatusText: "Onboarding: remote archive search happens in Network mode.",
+            Mode: BrowserMode.Network),
+        new(
+            Badge: "Filesystem",
+            Title: "Import studies from folders or DICOM media",
+            Summary: "Filesystem mode scans a folder tree or DICOMDIR source, shows completed studies in the grid, and imports selected studies into SQLite in the background.",
+            Bullets:
+            [
+                "Switch to Filesystem mode and choose a root folder or expand Computer.",
+                "Right-click a folder in the tree and choose Scan folder.",
+                "After preview studies appear, select one and use Import to copy it into the imagebox."
+            ],
+            Hint: "The Filesystem tab also shows import background jobs so you can keep working while a copy runs.",
+            ToastMessage: "Filesystem mode scans folders first, then imports the selected preview study into the local imagebox.",
+            StatusText: "Onboarding: scan media in Filesystem mode, then import the selected preview study.",
+            Mode: BrowserMode.Filesystem,
+            PrimaryAction: OnboardingPrimaryAction.ChooseFilesystemRoot,
+            PrimaryActionLabel: "Choose folder root"),
+        new(
+            Badge: "Database",
+            Title: "Open studies in the viewer",
+            Summary: "The Database mode lists imported local studies. From there you can open one study in one or more viewer windows.",
+            Bullets:
+            [
+                "Select a patient and one study in Database mode.",
+                "Double-click the study row or press View in the Actions column.",
+                "Use Viewer windows to choose whether the next study opens in 1 to 4 separate viewer windows."
+            ],
+            Hint: "Viewing is enabled only when a single study is selected.",
+            ToastMessage: "To view a study, select one row in Database mode and double-click it or press View.",
+            StatusText: "Onboarding: open a single imported study from Database mode.",
+            Mode: BrowserMode.Database,
+            PrimaryAction: OnboardingPrimaryAction.OpenSelectedStudy,
+            PrimaryActionLabel: "Open selected study"),
+        new(
+            Badge: "Viewer",
+            Title: "Adjust monitor and display settings in the viewer",
+            Summary: "Inside the viewer, the floating toolbar controls stack scrolling, zoom-pan, window/level, measurements, layout presets, LUTs, and overlay visibility.",
+            Bullets:
+            [
+                "Use Window to open presets such as Brain, Abdomen, Lung, Bone, and Reset.",
+                "Use LUT buttons such as Grayscale, Inverted, Hot Iron, Rainbow, Gold, and Bone for monitor presentation.",
+                "Use Scroll/Stack, Zoom-Pan, Layout, and Overlay to change how the study is displayed."
+            ],
+            Hint: "If a study is already selected, the action button can open it so you can try the viewer toolbar immediately.",
+            ToastMessage: "Viewer display settings live in the floating toolbar: Window presets, LUTs, layout, zoom, and overlay controls.",
+            StatusText: "Onboarding: viewer display settings are available in the floating toolbar.",
+            Mode: BrowserMode.Database,
+            PrimaryAction: OnboardingPrimaryAction.OpenSelectedStudy,
+            PrimaryActionLabel: "Open selected study"),
+        new(
+            Badge: "Database",
+            Title: "Delete studies carefully",
+            Summary: "Deleting is only available for local studies in Database mode. The action removes the study from the local imagebox after confirmation.",
+            Bullets:
+            [
+                "Switch to Database mode and select one or more local studies.",
+                "Right-click the study grid and choose Delete Study.",
+                "Confirm the deletion in the dialog before files are removed."
+            ],
+            Hint: "Delete is intentionally limited to the local Database mode so preview or remote studies cannot be removed by mistake.",
+            ToastMessage: "Delete Study is available from the Database grid context menu after selecting one or more local studies.",
+            StatusText: "Onboarding: deletion is available only for local studies in Database mode.",
+            Mode: BrowserMode.Database),
+        new(
+            Badge: "Database",
+            Title: "Pseudonymize / anonymize imported studies",
+            Summary: "Use Modify in Database mode to pseudonymize a local study and replace patient-identifying fields with new values.",
+            Bullets:
+            [
+                "Select one imported local study in Database mode.",
+                "Click Modify in the Actions column to open the pseudonymization dialog.",
+                "Enter replacement patient data and apply the changes to the study files and index."
+            ],
+            Hint: "The Modify action is enabled only when one imported study is selected.",
+            ToastMessage: "Modify opens the pseudonymization dialog for one imported study in Database mode.",
+            StatusText: "Onboarding: pseudonymization is available through Modify in Database mode.",
+            Mode: BrowserMode.Database),
+        new(
+            Badge: "Send",
+            Title: "Send local studies back to a remote archive",
+            Summary: "After a study is local, use Send to queue a background DICOM transmission to the configured remote archive.",
+            Bullets:
+            [
+                "Select one or more local studies in Database mode, or wait for Filesystem import scans to finish before sending preview studies.",
+                "Make sure a remote archive is configured in Network mode first.",
+                "Use the Filesystem info panel to monitor import jobs, and the job log to inspect failures."
+            ],
+            Hint: "Send uses the same network configuration as remote querying, so a working archive setup helps both workflows.",
+            ToastMessage: "Send is available for local studies once a remote archive is configured in Network mode.",
+            StatusText: "Onboarding: sending uses the configured remote archive and local study files.",
+            Mode: BrowserMode.Database)
+    ];
+
     private sealed class PatientRow
     {
         public string PatientName { get; init; } = string.Empty;
@@ -2334,5 +2752,7 @@ public partial class MainWindow : Window
         public BrowserMode LastBrowserMode { get; init; } = BrowserMode.Database;
         public string? FilesystemRootPath { get; init; }
         public int ViewerWindowCount { get; init; } = 1;
+        public int OnboardingCompletedVersion { get; init; }
+        public int OnboardingDismissedVersion { get; init; }
     }
 }

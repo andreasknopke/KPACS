@@ -189,109 +189,118 @@
                                                                         </Border>
 
                                                                         <Border Background="#FFF2F6FA" BorderBrush="#FFD3DEE7" BorderThickness="1" CornerRadius="12" Padding="6">
-                                                                                <TabControl Classes="compactTabs" SelectedIndex="0">
-                                                                                        <TabItem Header="Health">
-                                                                                                <StackPanel Margin="0,8,0,0" Spacing="8">
-                                                                                                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                                                                                                                <TextBlock Text="Network health" FontWeight="Bold" FontSize="14" Foreground="#FF25343E" VerticalAlignment="Center" />
-                                                                                                                <Button Grid.Column="1" Content="Configure" Click="OnConfigClick" />
-                                                                                                                <Button Grid.Column="2" Content="Details" Click="OnInfoClick" />
-                                                                                                        </Grid>
+                                                                                <StackPanel Margin="0,8,0,0" Spacing="8">
+                                                                                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                                                                                <TextBlock Text="Network health" FontWeight="Bold" FontSize="14" Foreground="#FF25343E" VerticalAlignment="Center" />
+                                                                                                <Button Grid.Column="1" Content="Configure" Click="OnConfigClick" />
+                                                                                                <Button Grid.Column="2" Content="Details" Click="OnInfoClick" />
+                                                                                        </Grid>
 
-                                                                                                        <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="8">
-                                                                                                                <Border Classes="networkInfoCard">
-                                                                                                                        <StackPanel Spacing="6">
-                                                                                                                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                                                                                                                                        <TextBlock Classes="networkCardIcon" Text="☁" />
-                                                                                                                                        <TextBlock Grid.Column="1" Classes="networkCardTitle" Text="Remote archive" VerticalAlignment="Center" />
-                                                                                                                                        <Border x:Name="RemoteArchiveBadge" Grid.Column="2" CornerRadius="9" Padding="8,2" Background="#FFE7EDF2">
-                                                                                                                                                <TextBlock x:Name="RemoteArchiveBadgeText" Foreground="#FF41515D" FontSize="11" FontWeight="SemiBold" />
-                                                                                                                                        </Border>
-                                                                                                                                </Grid>
-                                                                                                                                <TextBlock x:Name="RemoteArchivePrimaryText" Classes="networkCardBody" />
-                                                                                                                                <TextBlock x:Name="RemoteArchiveSecondaryText" Classes="networkCardBody" />
-                                                                                                                        </StackPanel>
-                                                                                                                </Border>
+                                                                                        <Grid ColumnDefinitions="*,*" RowDefinitions="Auto" ColumnSpacing="8" RowSpacing="8">
+                                                                                                <Border Classes="networkInfoCard">
+                                                                                                        <StackPanel Spacing="6">
+                                                                                                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                                                                                                        <TextBlock Classes="networkCardIcon" Text="☁" />
+                                                                                                                        <TextBlock Grid.Column="1" Classes="networkCardTitle" Text="Remote archive" VerticalAlignment="Center" />
+                                                                                                                        <Border x:Name="RemoteArchiveBadge" Grid.Column="2" CornerRadius="9" Padding="8,2" Background="#FFE7EDF2">
+                                                                                                                                <TextBlock x:Name="RemoteArchiveBadgeText" Foreground="#FF41515D" FontSize="11" FontWeight="SemiBold" />
+                                                                                                                        </Border>
+                                                                                                                </Grid>
+                                                                                                                <TextBlock x:Name="RemoteArchivePrimaryText" Classes="networkCardBody" />
+                                                                                                                <TextBlock x:Name="RemoteArchiveSecondaryText" Classes="networkCardBody" />
+                                                                                                        </StackPanel>
+                                                                                                </Border>
 
-                                                                                                                <Border Grid.Column="1" Classes="networkInfoCard">
-                                                                                                                        <StackPanel Spacing="6">
-                                                                                                                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                                                                                                                                        <TextBlock Classes="networkCardIcon" Text="🗄" />
-                                                                                                                                        <TextBlock Grid.Column="1" Classes="networkCardTitle" Text="Local imagebox" VerticalAlignment="Center" />
-                                                                                                                                        <Border x:Name="LocalDatabaseBadge" Grid.Column="2" CornerRadius="9" Padding="8,2" Background="#FFE7EDF2">
-                                                                                                                                                <TextBlock x:Name="LocalDatabaseBadgeText" Foreground="#FF41515D" FontSize="11" FontWeight="SemiBold" />
-                                                                                                                                        </Border>
-                                                                                                                                </Grid>
-                                                                                                                                <TextBlock x:Name="LocalDatabasePrimaryText" Classes="networkCardBody" />
-                                                                                                                                <TextBlock x:Name="LocalDatabaseSecondaryText" Classes="networkCardBody" />
-                                                                                                                        </StackPanel>
-                                                                                                                </Border>
-
-                                                                                                                <Border Grid.Row="1" Classes="networkInfoCard">
-                                                                                                                        <StackPanel Spacing="6">
-                                                                                                                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                                                                                                                                        <TextBlock Classes="networkCardIcon" Text="📥" />
-                                                                                                                                        <TextBlock Grid.Column="1" Classes="networkCardTitle" Text="Storage SCP / Inbox" VerticalAlignment="Center" />
-                                                                                                                                        <Border x:Name="StorageScpBadge" Grid.Column="2" CornerRadius="9" Padding="8,2" Background="#FFE7EDF2">
-                                                                                                                                                <TextBlock x:Name="StorageScpBadgeText" Foreground="#FF41515D" FontSize="11" FontWeight="SemiBold" />
-                                                                                                                                        </Border>
-                                                                                                                                </Grid>
-                                                                                                                                <TextBlock x:Name="StorageScpPrimaryText" Classes="networkCardBody" />
-                                                                                                                                <TextBlock x:Name="StorageScpSecondaryText" Classes="networkCardBody" />
-                                                                                                                        </StackPanel>
-                                                                                                                </Border>
-
-                                                                                                                <Border Grid.Row="1" Grid.Column="1" Classes="networkInfoCard">
-                                                                                                                        <StackPanel Spacing="6">
-                                                                                                                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                                                                                                                                        <TextBlock Classes="networkCardIcon" Text="💾" />
-                                                                                                                                        <TextBlock Grid.Column="1" Classes="networkCardTitle" Text="Drive space" VerticalAlignment="Center" />
-                                                                                                                                        <Border x:Name="DiskHealthBadge" Grid.Column="2" CornerRadius="9" Padding="8,2" Background="#FFE7EDF2">
-                                                                                                                                                <TextBlock x:Name="DiskHealthBadgeText" Foreground="#FF41515D" FontSize="11" FontWeight="SemiBold" />
-                                                                                                                                        </Border>
-                                                                                                                                </Grid>
-                                                                                                                                <TextBlock x:Name="DiskHealthPrimaryText" Classes="networkCardBody" />
-                                                                                                                                <TextBlock x:Name="DiskHealthSecondaryText" Classes="networkCardBody" />
-                                                                                                                        </StackPanel>
-                                                                                                                </Border>
-                                                                                                        </Grid>
-                                                                                                </StackPanel>
-                                                                                        </TabItem>
-                                                                                        <TabItem Header="Background Jobs">
-                                                                                                <StackPanel Margin="0,8,0,0" Spacing="8">
-                                                                                                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                                                                                                                <TextBlock Text="Background jobs" FontWeight="SemiBold" Foreground="#FF25343E" VerticalAlignment="Center" />
-                                                                                                                <Button Grid.Column="1" Content="Job log" Click="OnViewBackgroundJobLogClick" />
-                                                                                                                <Button Grid.Column="2" Content="DICOM trace" Click="OnViewDicomTraceLogClick" />
-                                                                                                        </Grid>
-                                                                                                        <TextBlock x:Name="BackgroundJobsSummaryText" Classes="networkCardBody" />
-                                                                                                        <DataGrid x:Name="BackgroundJobsGrid"
-                                                                                                                  AutoGenerateColumns="False"
-                                                                                                                  HeadersVisibility="Column"
-                                                                                                                  CanUserResizeColumns="True"
-                                                                                                                  CanUserSortColumns="True"
-                                                                                                                  IsReadOnly="True"
-                                                                                                                  MinHeight="150"
-                                                                                                                  MaxHeight="190">
-                                                                                                                <DataGrid.Columns>
-                                                                                                                        <DataGridTextColumn Header="Type" Binding="{Binding TypeLabel}" Width="90" />
-                                                                                                                        <DataGridTextColumn Header="Study / Job" Binding="{Binding Title}" Width="2*" />
-                                                                                                                        <DataGridTextColumn Header="State" Binding="{Binding StateLabel}" Width="120" />
-                                                                                                                        <DataGridTextColumn Header="Progress" Binding="{Binding ProgressLabel}" Width="150" />
-                                                                                                                        <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="3*" />
-                                                                                                                </DataGrid.Columns>
-                                                                                                        </DataGrid>
-                                                                                                </StackPanel>
-                                                                                        </TabItem>
-                                                                                </TabControl>
+                                                                                                <Border Grid.Column="1" Classes="networkInfoCard">
+                                                                                                        <StackPanel Spacing="6">
+                                                                                                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                                                                                                        <TextBlock Classes="networkCardIcon" Text="📥" />
+                                                                                                                        <TextBlock Grid.Column="1" Classes="networkCardTitle" Text="Storage SCP / Inbox" VerticalAlignment="Center" />
+                                                                                                                        <Border x:Name="StorageScpBadge" Grid.Column="2" CornerRadius="9" Padding="8,2" Background="#FFE7EDF2">
+                                                                                                                                <TextBlock x:Name="StorageScpBadgeText" Foreground="#FF41515D" FontSize="11" FontWeight="SemiBold" />
+                                                                                                                        </Border>
+                                                                                                                </Grid>
+                                                                                                                <TextBlock x:Name="StorageScpPrimaryText" Classes="networkCardBody" />
+                                                                                                                <TextBlock x:Name="StorageScpSecondaryText" Classes="networkCardBody" />
+                                                                                                        </StackPanel>
+                                                                                                </Border>
+                                                                                        </Grid>
+                                                                                </StackPanel>
                                                                         </Border>
                                                                 </StackPanel>
                                                         </TabItem>
                                                         <TabItem Header="Database">
-                                                                <TextBlock Margin="8" Text="SQLite-backed K-PACS imagebox." Foreground="#FF555555" />
+                                                                <StackPanel Margin="6" Spacing="6">
+                                                                        <TextBlock Text="SQLite-backed K-PACS imagebox." Foreground="#FF555555" />
+                                                                        <Border Background="#FFF2F6FA" BorderBrush="#FFD3DEE7" BorderThickness="1" CornerRadius="12" Padding="6">
+                                                                                <StackPanel Margin="0,8,0,0" Spacing="8">
+                                                                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                                                                                <TextBlock Text="Database health" FontWeight="Bold" FontSize="14" Foreground="#FF25343E" VerticalAlignment="Center" />
+                                                                                                <Button Grid.Column="1" Content="Details" Click="OnInfoClick" />
+                                                                                        </Grid>
+
+                                                                                        <Grid ColumnDefinitions="*,*" RowDefinitions="Auto" ColumnSpacing="8" RowSpacing="8">
+                                                                                                <Border Classes="networkInfoCard">
+                                                                                                        <StackPanel Spacing="6">
+                                                                                                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                                                                                                        <TextBlock Classes="networkCardIcon" Text="🗄" />
+                                                                                                                        <TextBlock Grid.Column="1" Classes="networkCardTitle" Text="Local imagebox" VerticalAlignment="Center" />
+                                                                                                                        <Border x:Name="LocalDatabaseBadge" Grid.Column="2" CornerRadius="9" Padding="8,2" Background="#FFE7EDF2">
+                                                                                                                                <TextBlock x:Name="LocalDatabaseBadgeText" Foreground="#FF41515D" FontSize="11" FontWeight="SemiBold" />
+                                                                                                                        </Border>
+                                                                                                                </Grid>
+                                                                                                                <TextBlock x:Name="LocalDatabasePrimaryText" Classes="networkCardBody" />
+                                                                                                                <TextBlock x:Name="LocalDatabaseSecondaryText" Classes="networkCardBody" />
+                                                                                                        </StackPanel>
+                                                                                                </Border>
+
+                                                                                                <Border Grid.Column="1" Classes="networkInfoCard">
+                                                                                                        <StackPanel Spacing="6">
+                                                                                                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                                                                                                        <TextBlock Classes="networkCardIcon" Text="💾" />
+                                                                                                                        <TextBlock Grid.Column="1" Classes="networkCardTitle" Text="Drive space" VerticalAlignment="Center" />
+                                                                                                                        <Border x:Name="DiskHealthBadge" Grid.Column="2" CornerRadius="9" Padding="8,2" Background="#FFE7EDF2">
+                                                                                                                                <TextBlock x:Name="DiskHealthBadgeText" Foreground="#FF41515D" FontSize="11" FontWeight="SemiBold" />
+                                                                                                                        </Border>
+                                                                                                                </Grid>
+                                                                                                                <TextBlock x:Name="DiskHealthPrimaryText" Classes="networkCardBody" />
+                                                                                                                <TextBlock x:Name="DiskHealthSecondaryText" Classes="networkCardBody" />
+                                                                                                        </StackPanel>
+                                                                                                </Border>
+                                                                                        </Grid>
+                                                                                </StackPanel>
+                                                                        </Border>
+                                                                </StackPanel>
                                                         </TabItem>
                                                         <TabItem Header="Filesystem">
-                                                                <TextBlock Margin="8" Text="Import folders or DICOMDIR media into the imagebox." Foreground="#FF555555" />
+                                                                <StackPanel Margin="6" Spacing="6">
+                                                                        <TextBlock Text="Import folders or DICOMDIR media into the imagebox." Foreground="#FF555555" />
+                                                                        <Border Background="#FFF2F6FA" BorderBrush="#FFD3DEE7" BorderThickness="1" CornerRadius="12" Padding="6">
+                                                                                <StackPanel Margin="0,8,0,0" Spacing="8">
+                                                                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                                                                                <TextBlock Text="Import jobs" FontWeight="SemiBold" Foreground="#FF25343E" VerticalAlignment="Center" />
+                                                                                                <Button Grid.Column="1" Content="Job log" Click="OnViewBackgroundJobLogClick" />
+                                                                                        </Grid>
+                                                                                        <TextBlock x:Name="BackgroundJobsSummaryText" Classes="networkCardBody" />
+                                                                                        <DataGrid x:Name="BackgroundJobsGrid"
+                                                                                                  AutoGenerateColumns="False"
+                                                                                                  HeadersVisibility="Column"
+                                                                                                  CanUserResizeColumns="True"
+                                                                                                  CanUserSortColumns="True"
+                                                                                                  IsReadOnly="True"
+                                                                                                  MinHeight="150"
+                                                                                                  MaxHeight="190">
+                                                                                                <DataGrid.Columns>
+                                                                                                        <DataGridTextColumn Header="Type" Binding="{Binding TypeLabel}" Width="90" />
+                                                                                                        <DataGridTextColumn Header="Study / Job" Binding="{Binding Title}" Width="2*" />
+                                                                                                        <DataGridTextColumn Header="State" Binding="{Binding StateLabel}" Width="120" />
+                                                                                                        <DataGridTextColumn Header="Progress" Binding="{Binding ProgressLabel}" Width="150" />
+                                                                                                        <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="3*" />
+                                                                                                </DataGrid.Columns>
+                                                                                        </DataGrid>
+                                                                                </StackPanel>
+                                                                        </Border>
+                                                                </StackPanel>
                                                         </TabItem>
                                                         <TabItem Header="Email">
                                                                 <TextBlock Margin="8" Text="Email/export workflow is not implemented yet." Foreground="#FF555555" />
@@ -319,6 +328,7 @@
                                         <Button x:Name="ViewActionButton" Classes="action" Content="View" Click="OnOpenViewerClick" />
                                         <Button x:Name="SendActionButton" Classes="action" Content="Send" Click="OnSendSelectedClick" />
                                         <Button x:Name="ModifyActionButton" Classes="action" Content="Modify" Click="OnPseudonymizeClick" />
+                                        <Button x:Name="GuideActionButton" Content="Guide" Click="OnGuideClick" ToolTip.Tip="Show the onboarding tour again." />
                                         <StackPanel Spacing="4" Margin="0,8,0,0">
                                                 <TextBlock Text="Viewer windows" Foreground="#FF555555" HorizontalAlignment="Center" />
                                                 <ComboBox x:Name="ViewerWindowCountComboBox" Width="58" HorizontalAlignment="Center" SelectionChanged="OnViewerWindowCountChanged">
@@ -473,6 +483,57 @@
                         </Border>
                 </Grid>
                 </DockPanel>
+
+                <Border x:Name="OnboardingOverlay"
+                        Background="#A6000000"
+                        IsVisible="False"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Stretch">
+                        <Border Width="680"
+                                MaxWidth="680"
+                                Padding="18"
+                                CornerRadius="16"
+                                Background="#FFF9FBFD"
+                                BorderBrush="#FFD0DCE5"
+                                BorderThickness="1"
+                                BoxShadow="0 18 48 0 #70000000"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                                <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" RowSpacing="12">
+                                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+                                                <StackPanel>
+                                                        <TextBlock Text="Welcome to K-PACS" FontWeight="Bold" FontSize="20" Foreground="#FF21303A" />
+                                                        <TextBlock x:Name="OnboardingStepText" Foreground="#FF5A6770" Margin="0,4,0,0" />
+                                                </StackPanel>
+                                                <Border x:Name="OnboardingModeBadge" Grid.Column="1" Background="#FFE7EDF2" CornerRadius="10" Padding="10,4" VerticalAlignment="Center" IsVisible="False">
+                                                        <TextBlock x:Name="OnboardingModeBadgeText" Foreground="#FF41515D" FontWeight="SemiBold" FontSize="11" />
+                                                </Border>
+                                                <Button Grid.Column="2" Content="Skip" MinWidth="72" Click="OnOnboardingSkipClick" />
+                                        </Grid>
+
+                                        <TextBlock x:Name="OnboardingTitleText" Grid.Row="1" FontWeight="SemiBold" FontSize="17" Foreground="#FF25343E" TextWrapping="Wrap" />
+                                        <TextBlock x:Name="OnboardingSummaryText" Grid.Row="2" Foreground="#FF4F5E68" TextWrapping="Wrap" />
+
+                                        <Border Grid.Row="3" Background="#FFF2F6FA" BorderBrush="#FFD3DEE7" BorderThickness="1" CornerRadius="12" Padding="14">
+                                                <StackPanel Spacing="10">
+                                                        <TextBlock Text="What to do" FontWeight="Bold" Foreground="#FF25343E" />
+                                                        <TextBlock x:Name="OnboardingTipsText" Foreground="#FF4F5E68" TextWrapping="Wrap" />
+                                                        <Border Background="#FFF8F1D9" BorderBrush="#FFE3C67A" BorderThickness="1" CornerRadius="10" Padding="10,8">
+                                                                <TextBlock x:Name="OnboardingHintText" Foreground="#FF6C5821" TextWrapping="Wrap" />
+                                                        </Border>
+                                                </StackPanel>
+                                        </Border>
+
+                                        <Grid Grid.Row="4" ColumnDefinitions="Auto,Auto,*,Auto,Auto" ColumnSpacing="10">
+                                                <Button x:Name="OnboardingToastButton" Content="Tip again" MinWidth="88" Click="OnOnboardingToastClick" />
+                                                <Button x:Name="OnboardingPrimaryActionButton" Grid.Column="1" Content="Try it" MinWidth="120" Click="OnOnboardingPrimaryActionClick" IsVisible="False" />
+                                                <TextBlock Grid.Column="2" VerticalAlignment="Center" Foreground="#FF5A6770" Text="You can reopen this tour any time with Guide." TextWrapping="Wrap" />
+                                                <Button x:Name="OnboardingPreviousButton" Grid.Column="3" Content="Previous" MinWidth="88" Click="OnOnboardingPreviousClick" />
+                                                <Button x:Name="OnboardingNextButton" Grid.Column="4" Classes="action" Content="Next" MinWidth="88" Click="OnOnboardingNextClick" />
+                                        </Grid>
+                                </Grid>
+                        </Border>
+                </Border>
 
                 <ItemsControl x:Name="ToastItemsControl"
                               HorizontalAlignment="Right"
