@@ -81,15 +81,13 @@ public sealed class PriorStudyLookupService
 
     private async Task<IReadOnlyList<PriorStudySummary>> FindLocalPriorStudiesMappedAsync(StudyListItem currentStudy, CancellationToken cancellationToken)
     {
-        IReadOnlyList<StudyListItem> studies = await _repository.FindPriorStudiesAsync(currentStudy, 12, cancellationToken);
+        IReadOnlyList<StudyListItem> studies = await _repository.FindPriorStudiesAsync(currentStudy, int.MaxValue, cancellationToken);
 
         return studies
             .Where(study => IsSamePatient(study, currentStudy))
             .Where(study => !string.Equals(study.StudyInstanceUid, currentStudy.StudyInstanceUid, StringComparison.Ordinal))
-            .Where(study => IsPriorByDate(study.StudyDate, currentStudy.StudyDate))
             .DistinctBy(study => study.StudyInstanceUid)
             .OrderByDescending(study => study.StudyDate)
-            .Take(12)
             .Select(study => new PriorStudySummary
             {
                 StudyKey = study.StudyKey,
@@ -99,6 +97,7 @@ public sealed class PriorStudyLookupService
                 StudyDate = study.StudyDate,
                 SourceLabel = study.StoragePath,
                 IsRemote = false,
+                IsNewerThanCurrentStudy = IsNewerByDate(study.StudyDate, currentStudy.StudyDate),
             })
             .ToList();
     }
@@ -112,20 +111,12 @@ public sealed class PriorStudyLookupService
             PatientBirthDate = string.IsNullOrWhiteSpace(currentStudy.PatientId) ? currentStudy.PatientBirthDate : string.Empty,
         };
 
-        DateOnly? currentStudyDate = ParseDicomDate(currentStudy.StudyDate);
-        if (currentStudyDate is not null)
-        {
-            query.ToStudyDate = currentStudyDate.Value.AddDays(-1);
-        }
-
         List<RemoteStudySearchResult> results = await _remoteStudyBrowserService.SearchStudiesAsync(query, cancellationToken);
         return results
             .Where(result => IsSamePatient(result.Study, currentStudy))
             .Where(result => !string.Equals(result.Study.StudyInstanceUid, currentStudy.StudyInstanceUid, StringComparison.Ordinal))
-            .Where(result => IsPriorByDate(result.Study.StudyDate, currentStudy.StudyDate))
             .DistinctBy(result => result.Study.StudyInstanceUid)
             .OrderByDescending(result => result.Study.StudyDate)
-            .Take(12)
             .Select(result => new PriorStudySummary
             {
                 StudyKey = result.Study.StudyKey,
@@ -136,6 +127,7 @@ public sealed class PriorStudyLookupService
                 SourceLabel = result.Archive.Name,
                 IsRemote = true,
                 ArchiveId = result.Archive.Id,
+                IsNewerThanCurrentStudy = IsNewerByDate(result.Study.StudyDate, currentStudy.StudyDate),
             })
             .ToList();
     }
@@ -158,17 +150,17 @@ public sealed class PriorStudyLookupService
             || string.Equals(candidate.PatientBirthDate.Trim(), currentStudy.PatientBirthDate.Trim(), StringComparison.Ordinal);
     }
 
-    private static bool IsPriorByDate(string candidateStudyDate, string currentStudyDate)
+    private static bool IsNewerByDate(string candidateStudyDate, string currentStudyDate)
     {
         DateOnly? current = ParseDicomDate(currentStudyDate);
         DateOnly? candidate = ParseDicomDate(candidateStudyDate);
 
         if (current is null || candidate is null)
         {
-            return true;
+            return false;
         }
 
-        return candidate.Value < current.Value;
+        return candidate.Value > current.Value;
     }
 
     private static DateOnly? ParseDicomDate(string value)

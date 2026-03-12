@@ -27,7 +27,7 @@ public partial class DicomViewPanel
 
     public SecondaryCaptureSnapshot? CaptureSecondaryCaptureSnapshot()
     {
-        if (_rawPixelData is null)
+        if (!IsImageLoaded)
         {
             return null;
         }

@@ -73,6 +73,24 @@
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Margin" Value="0,0,0,4" />
         </Style>
+        <Style Selector="TextBox">
+            <Setter Property="Background" Value="#FF2A2A2A" />
+            <Setter Property="Foreground" Value="#FFF2F2F2" />
+            <Setter Property="BorderBrush" Value="#FF6A6A6A" />
+            <Setter Property="CaretBrush" Value="#FF35C7FF" />
+            <Setter Property="SelectionBrush" Value="#6655A8FF" />
+        </Style>
+        <Style Selector="TextBox:focus">
+            <Setter Property="BorderBrush" Value="#FF7FD9FF" />
+        </Style>
+        <Style Selector="ScrollBar">
+            <Setter Property="Background" Value="#FF2A2A2A" />
+            <Setter Property="Foreground" Value="#FFB8B8B8" />
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="ScrollBar:pointerover">
+            <Setter Property="Foreground" Value="#FFF0F0F0" />
+        </Style>
     </Window.Styles>
 
     <Grid RowDefinitions="Auto,Auto,*">
@@ -103,12 +121,13 @@
                 <ScrollViewer x:Name="PriorStudiesScrollViewer"
                               HorizontalScrollBarVisibility="Auto"
                               VerticalScrollBarVisibility="Disabled"
+                              AllowAutoHide="False"
                               IsVisible="False"
                               Margin="0,0,0,6">
                     <StackPanel x:Name="PriorStudiesPanel" Orientation="Horizontal" Spacing="8" />
                 </ScrollViewer>
 
-                <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Visible" VerticalScrollBarVisibility="Disabled" AllowAutoHide="False">
                     <StackPanel x:Name="ThumbnailStripPanel" Orientation="Horizontal" Spacing="8" />
                 </ScrollViewer>
             </Grid>

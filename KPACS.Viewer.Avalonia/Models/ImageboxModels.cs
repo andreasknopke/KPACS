@@ -110,6 +110,7 @@ public sealed class PriorStudySummary
     public string SourceLabel { get; init; } = string.Empty;
     public bool IsRemote { get; init; }
     public string ArchiveId { get; init; } = string.Empty;
+    public bool IsNewerThanCurrentStudy { get; init; }
 
     public string DisplayLabel
     {
@@ -118,13 +119,14 @@ public sealed class PriorStudySummary
             string modality = GetPrimaryModality(Modalities);
             string description = StudyDescription.Trim();
             string title = string.IsNullOrWhiteSpace(description)
-                ? (!string.IsNullOrWhiteSpace(modality) ? modality : "Prior study")
+                ? (!string.IsNullOrWhiteSpace(modality) ? modality : "Study")
                 : !string.IsNullOrWhiteSpace(modality) && !description.StartsWith(modality, StringComparison.OrdinalIgnoreCase)
                     ? $"{modality} {description}".Trim()
                     : description;
 
             string date = FormatShortDicomDate(StudyDate);
-            return string.IsNullOrWhiteSpace(date) ? title : $"{title} {date}";
+            string label = string.IsNullOrWhiteSpace(date) ? title : $"{title} {date}";
+            return IsNewerThanCurrentStudy ? $"{label} ↑newer" : label;
         }
     }
 
@@ -136,9 +138,13 @@ public sealed class PriorStudySummary
             string baseText = string.IsNullOrWhiteSpace(fullDate)
                 ? DisplayLabel
                 : $"{DisplayLabel} • {fullDate}";
-            return string.IsNullOrWhiteSpace(SourceLabel)
+            string sourceText = string.IsNullOrWhiteSpace(SourceLabel)
                 ? baseText
                 : $"{baseText} • {SourceLabel}";
+
+            return IsNewerThanCurrentStudy
+                ? $"{sourceText} • newer than the current study"
+                : sourceText;
         }
     }
 

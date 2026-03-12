@@ -12,3 +12,4 @@ KPACS.Viewer/
 
 # Local published release output; keep packaged archives only
 release/win-x64-singlefile/
+artifacts/

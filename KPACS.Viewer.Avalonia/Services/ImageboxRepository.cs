@@ -251,12 +251,6 @@ public sealed class ImageboxRepository
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(study.StudyDate) && study.StudyDate.Length >= 8)
-        {
-            whereParts.Add("s.study_date < $studyDate");
-            command.Parameters.AddWithValue("$studyDate", study.StudyDate[..8]);
-        }
-
         command.Parameters.AddWithValue("$maxResults", Math.Max(1, maxResults));
         command.CommandText = $"""
             SELECT s.study_key, s.study_instance_uid, s.patient_name, s.patient_id, s.patient_birth_date, s.accession_number,

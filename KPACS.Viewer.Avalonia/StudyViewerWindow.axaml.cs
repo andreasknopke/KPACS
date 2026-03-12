@@ -876,8 +876,8 @@ public partial class StudyViewerWindow : Window
             if (_startBlank)
             {
                 _thumbnailStripMessage = _context.InitialPriorStudies.Count == 0
-                    ? "No prior studies are available. Select the current study thumbnails to populate this viewer."
-                    : "Select the current study or one of the prior-study chips to populate this viewer.";
+                    ? "No other studies are available. Select the current study thumbnails to populate this viewer."
+                    : "Select the current study or one of the patient-study chips to populate this viewer.";
                 RefreshThumbnailStrip(null);
             }
 
@@ -892,7 +892,7 @@ public partial class StudyViewerWindow : Window
 
         try
         {
-            IReadOnlyList<PriorStudySummary> priors = await _context.LoadPriorStudiesAsync(_priorLookupCancellation.Token);
+            IReadOnlyList<PriorStudySummary> relatedStudies = await _context.LoadPriorStudiesAsync(_priorLookupCancellation.Token);
             if (_priorLookupCancellation.IsCancellationRequested)
             {
                 return;
@@ -900,12 +900,14 @@ public partial class StudyViewerWindow : Window
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                UpdatePriorStudies(priors);
-                if (priors.Count > 0)
+                UpdatePriorStudies(relatedStudies);
+                if (relatedStudies.Count > 0)
                 {
-                    ShowToast(priors.Count == 1
-                        ? "1 prior study is available for comparison."
-                        : $"{priors.Count} prior studies are available for comparison.", ToastSeverity.Info);
+                    int newerCount = relatedStudies.Count(study => study.IsNewerThanCurrentStudy);
+                    ShowToast(relatedStudies.Count == 1
+                        ? "1 additional patient study is available for comparison."
+                        : $"{relatedStudies.Count} additional patient studies are available for comparison." +
+                          (newerCount > 0 ? $" ({newerCount} newer)" : string.Empty), ToastSeverity.Info);
                 }
             });
         }
@@ -1068,6 +1070,7 @@ public partial class StudyViewerWindow : Window
             toolTip: "Show and load the current study in this viewer.",
             isSelected: _isShowingCurrentStudy,
             isRemote: false,
+            isNewerStudy: false,
             isLoading: false,
             onClick: (_, _) => ShowCurrentStudyThumbnails()));
 
@@ -1086,19 +1089,20 @@ public partial class StudyViewerWindow : Window
                 prior.ToolTipText,
                 isSelected,
                 prior.IsRemote,
+                prior.IsNewerThanCurrentStudy,
                 isSelected && _isPriorPreviewLoading,
                 async (_, _) => await ShowPriorStudyThumbnailsAsync(prior)));
         }
     }
 
-    private Button CreateChipButton(string label, string toolTip, bool isSelected, bool isRemote, bool isLoading, EventHandler<RoutedEventArgs> onClick)
+    private Button CreateChipButton(string label, string toolTip, bool isSelected, bool isRemote, bool isNewerStudy, bool isLoading, EventHandler<RoutedEventArgs> onClick)
     {
         Color background = isSelected
-            ? Color.Parse(isRemote ? "#FF224C69" : "#FF5B4A20")
-            : Color.Parse(isRemote ? "#FF202D36" : "#FF2B2B2B");
+            ? Color.Parse(isNewerStudy ? "#FF3D3A1A" : isRemote ? "#FF224C69" : "#FF5B4A20")
+            : Color.Parse(isNewerStudy ? "#FF2E2B15" : isRemote ? "#FF202D36" : "#FF2B2B2B");
         Color border = isSelected
-            ? Color.Parse(isRemote ? "#FF76C8FF" : "#FFFFD66C")
-            : Color.Parse(isRemote ? "#FF3A647B" : "#FF565656");
+            ? Color.Parse(isNewerStudy ? "#FFFFE26D" : isRemote ? "#FF76C8FF" : "#FFFFD66C")
+            : Color.Parse(isNewerStudy ? "#FFC3A948" : isRemote ? "#FF3A647B" : "#FF565656");
         Color foreground = isLoading ? Color.Parse("#FFFFF1C1") : Colors.White;
 
         var button = new Button
@@ -1157,8 +1161,8 @@ public partial class StudyViewerWindow : Window
         _thumbnailStripStudy = null;
         _isPriorPreviewLoading = true;
         _thumbnailStripMessage = priorStudy.IsRemote
-            ? "Loading remote prior previews…"
-            : "Loading prior previews…";
+            ? "Loading remote study previews…"
+            : "Loading study previews…";
         RenderPriorStudyChips();
         RefreshThumbnailStrip(null);
         StudySubtitleText.Text = BuildSubtitle();
@@ -1187,8 +1191,8 @@ public partial class StudyViewerWindow : Window
                 if (_thumbnailStripStudy is null || _thumbnailStripStudy.Series.Count == 0)
                 {
                     _thumbnailStripMessage = priorStudy.IsRemote
-                        ? "No remote prior preview images arrived."
-                        : "No prior preview images are available.";
+                        ? "No remote study preview images arrived."
+                        : "No study preview images are available.";
                     RefreshThumbnailStrip(null);
                 }
 
