@@ -101,7 +101,7 @@
                 Padding="8,4"
                 HorizontalAlignment="Right"
                 IsVisible="False"
-                ToolTip.Tip="Linksklick: Ebene wechseln&#10;Rechtsklick: Axial, Coronal oder Sagittal wählen">
+                ToolTip.Tip="Left click: switch plane&#10;Right click: choose axial, coronal, or sagittal">
             <TextBlock x:Name="OrientationBadgeText"
                    Text=""
                    Foreground="#FFB9E9FF"
@@ -119,7 +119,7 @@
                 Padding="8,4"
                 HorizontalAlignment="Right"
                 IsVisible="False"
-                ToolTip.Tip="Linksklick ziehen: Sichtdicke ändern&#10;Rechtsklick: MPR, MipPR, MinPR oder MPVRT wählen">
+                ToolTip.Tip="Drag with left click: adjust slab thickness&#10;Right click: choose MPR, MipPR, MinPR, or MPVRT">
             <TextBlock x:Name="ProjectionBadgeText"
                    Text=""
                    Foreground="#FFFFDD00"

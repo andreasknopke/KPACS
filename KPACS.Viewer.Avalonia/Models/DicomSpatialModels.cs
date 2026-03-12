@@ -185,3 +185,4 @@ public sealed record DicomSpatialMetadata(
 }
 
 public sealed record DicomHoverInfo(Point ImagePoint, KeyModifiers Modifiers);
+public sealed record DicomImagePointerInfo(Point ImagePoint, KeyModifiers Modifiers);

@@ -261,10 +261,10 @@
                             <TextBlock Classes="popupSectionTitle" Text="Custom layout" />
                             <TextBlock Foreground="#FFBDBDBD"
                                        FontSize="11"
-                                       Text="Beispiele: 2:3 für 2 Reihen mit je 3 Bildern oder 1,2 für Reihe 1 = 1 Bild und Reihe 2 = 2 Bilder." />
+                                       Text="Examples: 2:3 for 2 rows with 3 images each, or 1,2 for row 1 = 1 image and row 2 = 2 images." />
                             <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
                                 <TextBox x:Name="CustomLayoutTextBox"
-                                         Watermark="z.B. 2:3 oder 1,2"
+                                         Watermark="e.g. 2:3 or 1,2"
                                          KeyUp="OnCustomLayoutTextBoxKeyUp" />
                                 <Button Grid.Column="1" Classes="popupAction" Content="Apply" Click="OnApplyCustomLayoutClick" />
                                 <Button Grid.Column="2" Classes="popupAction" Content="Save" Click="OnSaveCustomLayoutClick" />

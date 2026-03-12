@@ -244,6 +244,7 @@ public partial class DicomViewPanel : UserControl
     public event Action<int>? StackScrollRequested;
     public event Action? ViewStateChanged;
     public event Action<DicomHoverInfo?>? HoveredImagePointChanged;
+    public event Action<DicomImagePointerInfo>? ImagePointPressed;
     public event Action? ImageDoubleClicked;
 
     public MouseWheelMode WheelMode { get; set; } = MouseWheelMode.Zoom;
@@ -1749,6 +1750,11 @@ public partial class DicomViewPanel : UserControl
             ImageDoubleClicked?.Invoke();
             e.Handled = true;
             return;
+        }
+
+        if (point.Properties.IsLeftButtonPressed && TryGetImagePoint(pos, out Point imagePoint))
+        {
+            ImagePointPressed?.Invoke(new DicomImagePointerInfo(imagePoint, e.KeyModifiers));
         }
 
         if (point.Properties.IsRightButtonPressed || (point.Properties.IsLeftButtonPressed && IsWindowActionMode()))

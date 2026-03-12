@@ -185,7 +185,7 @@ public partial class StudyViewerWindow : Window
                 ConfigureSecondaryCapturePanel(slot, panel);
                 panel.StackScrollRequested += delta => OnStackScroll(border, delta);
                 panel.PointerPressed += (_, e) => OnViewportPressed(border, e);
-                panel.HoveredImagePointChanged += hover => OnPanelHovered(slot, hover);
+                panel.ImagePointPressed += info => OnPanelImagePointPressed(slot, info);
                 panel.ViewStateChanged += () => OnPanelViewStateChanged(slot, panel);
                 panel.ImageDoubleClicked += () => OnPanelImageDoubleClicked(slot);
                 border.Child = panel;
@@ -381,7 +381,7 @@ public partial class StudyViewerWindow : Window
         {
             SavedCustomLayoutsPanel.Children.Add(new TextBlock
             {
-                Text = "Noch keine gespeicherten Layouts.",
+                Text = "No saved layouts yet.",
                 Foreground = new SolidColorBrush(Color.Parse("#FFBDBDBD")),
                 FontSize = 11,
                 Margin = new Thickness(0, 2, 0, 0),
@@ -413,7 +413,7 @@ public partial class StudyViewerWindow : Window
         string layoutSpec = CustomLayoutTextBox.Text?.Trim() ?? string.Empty;
         if (!TryParseLayoutSpec(layoutSpec, out List<int> rowLayout))
         {
-            ShowToast("Ungültiges Layout. Beispiele: 2:3 oder 1,2", ToastSeverity.Warning);
+            ShowToast("Invalid layout. Examples: 2:3 or 1,2", ToastSeverity.Warning);
             return;
         }
 
@@ -432,7 +432,7 @@ public partial class StudyViewerWindow : Window
 
             RefreshSavedCustomLayoutsUi();
             SaveViewerSettings();
-            ShowToast($"Layout {normalizedSpec} gespeichert.", ToastSeverity.Success);
+            ShowToast($"Layout {normalizedSpec} saved.", ToastSeverity.Success);
         }
 
         CloseAllActionPopups();
@@ -619,7 +619,16 @@ public partial class StudyViewerWindow : Window
         }
 
         slot.ViewState = panel.CaptureDisplayState();
+        string syncSignature = BuildLinkedSyncSignature(slot, panel);
+        bool syncAnchorChanged = !string.Equals(slot.LastLinkedSyncSignature, syncSignature, StringComparison.Ordinal);
+        slot.LastLinkedSyncSignature = syncSignature;
+
         if (_isSynchronizingLinkedViews)
+        {
+            return;
+        }
+
+        if (!syncAnchorChanged)
         {
             return;
         }
@@ -984,7 +993,7 @@ public partial class StudyViewerWindow : Window
                     },
                 };
 
-                ToolTip.SetTip(keyBadge, "K-PACS-Schlüsselbildserie");
+                ToolTip.SetTip(keyBadge, "K-PACS key image series");
                 grid.Children.Add(keyBadge);
             }
 
@@ -1654,32 +1663,31 @@ public partial class StudyViewerWindow : Window
         return null;
     }
 
-    private void OnPanelHovered(ViewportSlot sourceSlot, DicomHoverInfo? hover)
+    private void OnPanelImagePointPressed(ViewportSlot sourceSlot, DicomImagePointerInfo info)
     {
         if (sourceSlot.Series is null || sourceSlot.CurrentSpatialMetadata is null)
         {
-            if (hover is null)
-            {
-                Clear3DCursor();
-            }
-
             return;
         }
 
-        if (hover is null)
+        if (!Is3DCursorRequested(info.Modifiers))
         {
-            Clear3DCursor();
-
             return;
         }
 
-        if (!Is3DCursorRequested(hover.Modifiers))
+        SetActiveSlot(sourceSlot, requestPriority: false);
+        Apply3DCursor(sourceSlot, info.ImagePoint);
+    }
+
+    private static string BuildLinkedSyncSignature(ViewportSlot slot, DicomViewPanel panel)
+    {
+        string seriesUid = slot.Series?.SeriesInstanceUid ?? string.Empty;
+        if (panel.IsVolumeBound)
         {
-            Clear3DCursor();
-            return;
+            return $"vol|{seriesUid}|{panel.VolumeOrientation}|{panel.VolumeSliceIndex}";
         }
 
-        Apply3DCursor(sourceSlot, hover.ImagePoint);
+        return $"img|{seriesUid}|{slot.InstanceIndex}";
     }
 
     private void Apply3DCursor(ViewportSlot sourceSlot, Point sourceImagePoint)
@@ -1693,37 +1701,46 @@ public partial class StudyViewerWindow : Window
 
         SpatialVector3D patientPoint = sourceMetadata.PatientPointFromPixel(sourceImagePoint);
 
-        foreach (ViewportSlot slot in _slots)
+        try
         {
-            if (slot.Series is null || slot.Series.Instances.Count == 0)
-            {
-                slot.Panel.Set3DCursorOverlay(null);
-                continue;
-            }
+            _isSynchronizingLinkedViews = true;
 
-            if (ReferenceEquals(slot, sourceSlot))
+            foreach (ViewportSlot slot in _slots)
             {
-                slot.Panel.Set3DCursorOverlay(sourceImagePoint);
-                continue;
-            }
+                if (slot.Series is null || slot.Series.Instances.Count == 0)
+                {
+                    slot.Panel.Set3DCursorOverlay(null);
+                    continue;
+                }
 
-            SliceProjection? projection = FindBestProjection(slot, sourceMetadata, patientPoint, sourceSlot.Volume);
-            if (projection is null)
-            {
-                slot.Panel.Set3DCursorOverlay(null);
-                continue;
-            }
+                if (ReferenceEquals(slot, sourceSlot))
+                {
+                    slot.Panel.Set3DCursorOverlay(sourceImagePoint);
+                    continue;
+                }
 
-            if (slot.InstanceIndex != projection.InstanceIndex)
-            {
-                slot.InstanceIndex = projection.InstanceIndex;
-                LoadSlot(slot);
-            }
+                SliceProjection? projection = FindBestProjection(slot, sourceMetadata, patientPoint, sourceSlot.Volume);
+                if (projection is null)
+                {
+                    slot.Panel.Set3DCursorOverlay(null);
+                    continue;
+                }
 
-            slot.CurrentSpatialMetadata = slot.Volume is not null
-                ? slot.Panel.SpatialMetadata
-                : GetSpatialMetadata(slot.Series.Instances[slot.InstanceIndex]);
-            slot.Panel.Set3DCursorOverlay(projection.ImagePoint);
+                if (slot.InstanceIndex != projection.InstanceIndex)
+                {
+                    slot.InstanceIndex = projection.InstanceIndex;
+                    LoadSlot(slot);
+                }
+
+                slot.CurrentSpatialMetadata = slot.Volume is not null
+                    ? slot.Panel.SpatialMetadata
+                    : GetSpatialMetadata(slot.Series.Instances[slot.InstanceIndex]);
+                slot.Panel.Set3DCursorOverlay(projection.ImagePoint);
+            }
+        }
+        finally
+        {
+            _isSynchronizingLinkedViews = false;
         }
 
         Broadcast3DCursor(sourceSlot.Volume, sourceMetadata, patientPoint);
@@ -1763,31 +1780,40 @@ public partial class StudyViewerWindow : Window
 
         Dispatcher.UIThread.Post(() =>
         {
-            foreach (ViewportSlot slot in _slots)
+            try
             {
-                if (slot.Series is null || slot.Series.Instances.Count == 0)
-                {
-                    slot.Panel.Set3DCursorOverlay(null);
-                    continue;
-                }
+                _isSynchronizingLinkedViews = true;
 
-                SliceProjection? projection = FindBestProjection(slot, sourceMetadata, patientPoint, sourceVolume);
-                if (projection is null)
+                foreach (ViewportSlot slot in _slots)
                 {
-                    slot.Panel.Set3DCursorOverlay(null);
-                    continue;
-                }
+                    if (slot.Series is null || slot.Series.Instances.Count == 0)
+                    {
+                        slot.Panel.Set3DCursorOverlay(null);
+                        continue;
+                    }
 
-                if (slot.InstanceIndex != projection.InstanceIndex)
-                {
-                    slot.InstanceIndex = projection.InstanceIndex;
-                    LoadSlot(slot);
-                }
+                    SliceProjection? projection = FindBestProjection(slot, sourceMetadata, patientPoint, sourceVolume);
+                    if (projection is null)
+                    {
+                        slot.Panel.Set3DCursorOverlay(null);
+                        continue;
+                    }
 
-                slot.CurrentSpatialMetadata = slot.Volume is not null
-                    ? slot.Panel.SpatialMetadata
-                    : GetSpatialMetadata(slot.Series.Instances[slot.InstanceIndex]);
-                slot.Panel.Set3DCursorOverlay(projection.ImagePoint);
+                    if (slot.InstanceIndex != projection.InstanceIndex)
+                    {
+                        slot.InstanceIndex = projection.InstanceIndex;
+                        LoadSlot(slot);
+                    }
+
+                    slot.CurrentSpatialMetadata = slot.Volume is not null
+                        ? slot.Panel.SpatialMetadata
+                        : GetSpatialMetadata(slot.Series.Instances[slot.InstanceIndex]);
+                    slot.Panel.Set3DCursorOverlay(projection.ImagePoint);
+                }
+            }
+            finally
+            {
+                _isSynchronizingLinkedViews = false;
             }
 
             UpdateStatus();
@@ -2727,6 +2753,7 @@ public partial class StudyViewerWindow : Window
         public DicomSpatialMetadata? CurrentSpatialMetadata { get; set; }
         public bool IsDropTarget { get; set; }
         public SeriesVolume? Volume { get; set; }
+        public string? LastLinkedSyncSignature { get; set; }
     }
 
     private sealed record ViewportSlotState(
