@@ -60,6 +60,14 @@
                    IsVisible="False" />
             </Canvas>
 
+        <Canvas x:Name="ReferenceLineOverlay" IsHitTestVisible="False">
+            <Line x:Name="ReferenceLinePrimary"
+                Stroke="#FF32D8FF"
+                StrokeThickness="1.5"
+                StrokeDashArray="10,6"
+                IsVisible="False" />
+        </Canvas>
+
             <Button x:Name="KeyImageButton"
                 Content="🔑"
                 Width="28"

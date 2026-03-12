@@ -52,11 +52,17 @@ public partial class StudyViewerWindow : Window
     private bool _isActionToolbarPointerOver;
     private bool _isPriorPreviewLoading;
     private bool _isSynchronizingLinkedViews;
+    private ViewportSlot? _linkedReferenceSourceSlot;
+    private SeriesVolume? _linkedReferenceSourceVolume;
+    private DicomSpatialMetadata? _linkedReferenceSourceMetadata;
+    private PendingLinkedSyncContext? _pendingLinkedSyncContext;
     private string _thumbnailStripMessage = string.Empty;
     private const int AdjacentPriorityDebounceMs = 180;
     private const int MaxLayoutRows = 6;
     private const int MaxLayoutColumnsPerRow = 6;
     private const int MaxLayoutSlots = 12;
+    private const double ParallelPlaneDotThreshold = 0.985;
+    private const double CutlineEdgeTolerance = 1e-3;
 
     public StudyViewerWindow(ViewerStudyContext context, string placementKey, int viewerNumber)
     {
@@ -602,6 +608,15 @@ public partial class StudyViewerWindow : Window
             RequestSlotPriority(slot);
         }
 
+        if (_linkedViewSyncEnabled)
+        {
+            SetLinkedReferenceSource(slot, slot?.Volume, slot?.CurrentSpatialMetadata);
+        }
+        else
+        {
+            ClearLinkedReferenceLines();
+        }
+
         UpdateStatus();
     }
 
@@ -622,6 +637,13 @@ public partial class StudyViewerWindow : Window
         string syncSignature = BuildLinkedSyncSignature(slot, panel);
         bool syncAnchorChanged = !string.Equals(slot.LastLinkedSyncSignature, syncSignature, StringComparison.Ordinal);
         slot.LastLinkedSyncSignature = syncSignature;
+
+        if (ReferenceEquals(slot, _linkedReferenceSourceSlot))
+        {
+            _linkedReferenceSourceMetadata = slot.CurrentSpatialMetadata;
+        }
+
+        RefreshLinkedReferenceLines();
 
         if (_isSynchronizingLinkedViews)
         {
@@ -831,6 +853,17 @@ public partial class StudyViewerWindow : Window
 
         if (viewState is not null)
             slot.Panel.ApplyDisplayState(viewState);
+
+        if (_linkedViewSyncEnabled)
+        {
+            if (ReferenceEquals(slot, _linkedReferenceSourceSlot))
+            {
+                SetLinkedReferenceSource(slot, slot.Volume, slot.CurrentSpatialMetadata);
+            }
+
+            ReplayPendingLinkedSyncContext();
+            RefreshLinkedReferenceLines();
+        }
 
         UpdateStatus();
     }
@@ -1419,6 +1452,8 @@ public partial class StudyViewerWindow : Window
         }
 
         DicomSpatialMetadata sourceMetadata = sourceSlot.CurrentSpatialMetadata;
+        SetPendingLinkedSyncContext(sourceSlot, sourceSlot.Volume, sourceMetadata, navigationState);
+        SetLinkedReferenceSource(sourceSlot, sourceSlot.Volume, sourceMetadata);
         SpatialVector3D patientPoint = sourceMetadata.PatientPointFromPixel(navigationState.CenterImagePoint);
 
         ApplyLinkedViewSync(sourceSlot, sourceSlot?.Volume, sourceMetadata, patientPoint, navigationState, broadcastToPeerViewers: true);
@@ -1444,6 +1479,12 @@ public partial class StudyViewerWindow : Window
             foreach (ViewportSlot targetSlot in _slots)
             {
                 if (ReferenceEquals(targetSlot, sourceSlot) || targetSlot.Series is null || targetSlot.Series.Instances.Count == 0)
+                {
+                    continue;
+                }
+
+                if (targetSlot.CurrentSpatialMetadata is not DicomSpatialMetadata targetMetadata ||
+                    !ArePlanesParallel(sourceMetadata, targetMetadata))
                 {
                     continue;
                 }
@@ -1476,6 +1517,8 @@ public partial class StudyViewerWindow : Window
         {
             _isSynchronizingLinkedViews = false;
         }
+
+        RefreshLinkedReferenceLines();
     }
 
     private void BroadcastLinkedViewSync(
@@ -1513,6 +1556,8 @@ public partial class StudyViewerWindow : Window
 
         Dispatcher.UIThread.Post(() =>
         {
+            SetPendingLinkedSyncContext(null, sourceVolume, sourceMetadata, navigationState);
+            SetLinkedReferenceSource(null, sourceVolume, sourceMetadata);
             ApplyLinkedViewSync(
                 sourceSlot: null,
                 sourceVolume,
@@ -1521,6 +1566,100 @@ public partial class StudyViewerWindow : Window
                 navigationState,
                 broadcastToPeerViewers: false);
         }, DispatcherPriority.Input);
+    }
+
+    private void SetPendingLinkedSyncContext(
+        ViewportSlot? sourceSlot,
+        SeriesVolume? sourceVolume,
+        DicomSpatialMetadata sourceMetadata,
+        DicomViewPanel.NavigationState navigationState)
+    {
+        SpatialVector3D patientPoint = sourceMetadata.PatientPointFromPixel(navigationState.CenterImagePoint);
+        _pendingLinkedSyncContext = new PendingLinkedSyncContext(sourceSlot, sourceVolume, sourceMetadata, patientPoint, navigationState);
+    }
+
+    private void ReplayPendingLinkedSyncContext()
+    {
+        if (!_linkedViewSyncEnabled || _pendingLinkedSyncContext is null || _isSynchronizingLinkedViews)
+        {
+            return;
+        }
+
+        PendingLinkedSyncContext context = _pendingLinkedSyncContext;
+        ApplyLinkedViewSync(
+            context.SourceSlot,
+            context.SourceVolume,
+            context.SourceMetadata,
+            context.PatientPoint,
+            context.NavigationState,
+            broadcastToPeerViewers: false);
+    }
+
+    private void SetLinkedReferenceSource(ViewportSlot? sourceSlot, SeriesVolume? sourceVolume, DicomSpatialMetadata? sourceMetadata)
+    {
+        _linkedReferenceSourceSlot = sourceMetadata is null ? null : sourceSlot;
+        _linkedReferenceSourceVolume = sourceMetadata is null ? null : sourceVolume;
+        _linkedReferenceSourceMetadata = sourceMetadata;
+        RefreshLinkedReferenceLines();
+    }
+
+    private void ClearLinkedReferenceLines()
+    {
+        _linkedReferenceSourceSlot = null;
+        _linkedReferenceSourceVolume = null;
+        _linkedReferenceSourceMetadata = null;
+
+        foreach (ViewportSlot slot in _slots)
+        {
+            slot.Panel.SetReferenceLineOverlay(null, null);
+        }
+    }
+
+    private void RefreshLinkedReferenceLines()
+    {
+        if (!_linkedViewSyncEnabled || _linkedReferenceSourceMetadata is null)
+        {
+            foreach (ViewportSlot slot in _slots)
+            {
+                slot.Panel.SetReferenceLineOverlay(null, null);
+            }
+
+            return;
+        }
+
+        DicomSpatialMetadata sourceMetadata = _linkedReferenceSourceMetadata;
+        foreach (ViewportSlot slot in _slots)
+        {
+            if (ReferenceEquals(slot, _linkedReferenceSourceSlot) ||
+                slot.Series is null ||
+                slot.CurrentSpatialMetadata is not DicomSpatialMetadata targetMetadata)
+            {
+                slot.Panel.SetReferenceLineOverlay(null, null);
+                continue;
+            }
+
+            DicomSpatialMetadata? effectiveSourceMetadata = GetReferenceMetadataForTarget(
+                sourceMetadata,
+                _linkedReferenceSourceVolume,
+                slot,
+                targetMetadata);
+
+            if (effectiveSourceMetadata is null ||
+                ArePlanesParallel(effectiveSourceMetadata, targetMetadata))
+            {
+                slot.Panel.SetReferenceLineOverlay(null, null);
+                continue;
+            }
+
+            if (TryBuildCutlineSegment(effectiveSourceMetadata, targetMetadata, out Point start, out Point end))
+            {
+                slot.Panel.SetReferenceLineOverlay(start, end);
+            }
+            else
+            {
+                slot.Panel.SetReferenceLineOverlay(null, null);
+            }
+        }
     }
 
     private ViewportSlot? GetSlotFromSender(object? sender)
@@ -1924,6 +2063,122 @@ public partial class StudyViewerWindow : Window
 
         int maxIndex = VolumeReslicer.GetSliceCount(volume, orientation) - 1;
         return Math.Clamp((int)Math.Round(rawIndex), 0, maxIndex);
+    }
+
+    private static DicomSpatialMetadata? GetReferenceMetadataForTarget(
+        DicomSpatialMetadata sourceMetadata,
+        SeriesVolume? sourceVolume,
+        ViewportSlot targetSlot,
+        DicomSpatialMetadata targetMetadata)
+    {
+        if (sourceMetadata.IsCompatibleWith(targetMetadata))
+        {
+            return sourceMetadata;
+        }
+
+        if (sourceVolume is null || targetSlot.Volume is null ||
+            !VolumeRegistrationService.TryGetRegistration(sourceVolume, targetSlot.Volume, out VolumeTranslationRegistration registration))
+        {
+            return null;
+        }
+
+        return sourceMetadata with
+        {
+            Origin = sourceMetadata.Origin + registration.Translation,
+            FrameOfReferenceUid = targetMetadata.FrameOfReferenceUid,
+            AcquisitionNumber = targetMetadata.AcquisitionNumber,
+        };
+    }
+
+    private static bool ArePlanesParallel(DicomSpatialMetadata first, DicomSpatialMetadata second) =>
+        Math.Abs(first.Normal.Dot(second.Normal)) >= ParallelPlaneDotThreshold;
+
+    private static bool TryBuildCutlineSegment(DicomSpatialMetadata sourcePlane, DicomSpatialMetadata targetPlane, out Point start, out Point end)
+    {
+        start = default;
+        end = default;
+
+        double width = Math.Max(0, targetPlane.Width - 1);
+        double height = Math.Max(0, targetPlane.Height - 1);
+        if (width <= 0 || height <= 0)
+        {
+            return false;
+        }
+
+        double a = sourcePlane.Normal.Dot(targetPlane.RowDirection) * targetPlane.ColumnSpacing;
+        double b = sourcePlane.Normal.Dot(targetPlane.ColumnDirection) * targetPlane.RowSpacing;
+        double c = sourcePlane.Normal.Dot(targetPlane.Origin - sourcePlane.Origin);
+
+        if (Math.Abs(a) <= CutlineEdgeTolerance && Math.Abs(b) <= CutlineEdgeTolerance)
+        {
+            return false;
+        }
+
+        var candidates = new List<Point>(4);
+
+        if (Math.Abs(b) > CutlineEdgeTolerance)
+        {
+            AddCutlineCandidate(candidates, 0, (-c) / b, width, height);
+            AddCutlineCandidate(candidates, width, (-(a * width) - c) / b, width, height);
+        }
+
+        if (Math.Abs(a) > CutlineEdgeTolerance)
+        {
+            AddCutlineCandidate(candidates, (-c) / a, 0, width, height);
+            AddCutlineCandidate(candidates, (-(b * height) - c) / a, height, width, height);
+        }
+
+        if (candidates.Count < 2)
+        {
+            return false;
+        }
+
+        double maxDistanceSquared = double.MinValue;
+        for (int i = 0; i < candidates.Count - 1; i++)
+        {
+            for (int j = i + 1; j < candidates.Count; j++)
+            {
+                Point candidateStart = candidates[i];
+                Point candidateEnd = candidates[j];
+                double dx = candidateEnd.X - candidateStart.X;
+                double dy = candidateEnd.Y - candidateStart.Y;
+                double distanceSquared = (dx * dx) + (dy * dy);
+                if (distanceSquared > maxDistanceSquared)
+                {
+                    maxDistanceSquared = distanceSquared;
+                    start = candidateStart;
+                    end = candidateEnd;
+                }
+            }
+        }
+
+        return maxDistanceSquared > 1.0;
+    }
+
+    private static void AddCutlineCandidate(List<Point> candidates, double x, double y, double width, double height)
+    {
+        if (double.IsNaN(x) || double.IsInfinity(x) || double.IsNaN(y) || double.IsInfinity(y))
+        {
+            return;
+        }
+
+        Point candidate = new(x, y);
+        if (candidate.X < -CutlineEdgeTolerance || candidate.X > width + CutlineEdgeTolerance ||
+            candidate.Y < -CutlineEdgeTolerance || candidate.Y > height + CutlineEdgeTolerance)
+        {
+            return;
+        }
+
+        candidate = new Point(
+            Math.Clamp(candidate.X, 0, width),
+            Math.Clamp(candidate.Y, 0, height));
+
+        if (candidates.Any(existing => Math.Abs(existing.X - candidate.X) <= CutlineEdgeTolerance && Math.Abs(existing.Y - candidate.Y) <= CutlineEdgeTolerance))
+        {
+            return;
+        }
+
+        candidates.Add(candidate);
     }
 
     private DicomSpatialMetadata? GetSpatialMetadata(InstanceRecord instance)
@@ -2594,7 +2849,12 @@ public partial class StudyViewerWindow : Window
         SaveViewerSettings();
         if (_linkedViewSyncEnabled)
         {
+            SetLinkedReferenceSource(_activeSlot, _activeSlot?.Volume, _activeSlot?.CurrentSpatialMetadata);
             SynchronizeLinkedViews(_activeSlot);
+        }
+        else
+        {
+            ClearLinkedReferenceLines();
         }
 
         RestartActionToolbarHideTimer();
@@ -2767,6 +3027,13 @@ public partial class StudyViewerWindow : Window
     private sealed record ViewerLayoutState(List<int> RowLayout, List<ViewportSlotState> SlotStates);
 
     private sealed record SliceProjection(int InstanceIndex, Point ImagePoint, double DistanceToPlane, bool ContainsImagePoint);
+    private sealed record PendingLinkedSyncContext(
+        ViewportSlot? SourceSlot,
+        SeriesVolume? SourceVolume,
+        DicomSpatialMetadata SourceMetadata,
+        SpatialVector3D PatientPoint,
+        DicomViewPanel.NavigationState NavigationState);
+
     private sealed class PendingThumbnailDrag(SeriesRecord series, Point startPoint, string thumbnailPath)
     {
         public SeriesRecord Series { get; } = series;

@@ -172,6 +172,8 @@ public partial class DicomViewPanel : UserControl
     private bool _isEdgeZoom;        // locked at mouse-down: true = zoom mode, false = pan mode
     private int _lastMouseY;         // for incremental edge-zoom tracking
     private Point? _cursor3DImagePoint;
+    private Point? _referenceLineStartImagePoint;
+    private Point? _referenceLineEndImagePoint;
     private ActionToolbarMode _actionMode = ActionToolbarMode.ZoomPan;
 
     // Pointer capture tracking
@@ -499,6 +501,7 @@ public partial class DicomViewPanel : UserControl
             _fitToWindow = true;
             ApplyInitialFitToWindow();
             Set3DCursorOverlay(null);
+            SetReferenceLineOverlay(null, null);
             ResetMeasurementStateForNewImage();
 
             UpdateOverlay();
@@ -632,6 +635,7 @@ public partial class DicomViewPanel : UserControl
         DicomImage.Height = double.NaN;
         PlaceholderText.IsVisible = true;
         Set3DCursorOverlay(null);
+        SetReferenceLineOverlay(null, null);
         PixelLensPanel.IsVisible = false;
         MeasurementOverlay.Children.Clear();
         ResetMeasurementStateForNewImage();
@@ -730,6 +734,7 @@ public partial class DicomViewPanel : UserControl
             ApplyInitialFitToWindow();
 
         Set3DCursorOverlay(null);
+        SetReferenceLineOverlay(null, null);
         ResetMeasurementStateForNewImage();
         UpdateOverlay();
         ImageLoaded?.Invoke();
@@ -1393,6 +1398,13 @@ public partial class DicomViewPanel : UserControl
         Update3DCursorOverlay();
     }
 
+    public void SetReferenceLineOverlay(Point? startImagePoint, Point? endImagePoint)
+    {
+        _referenceLineStartImagePoint = startImagePoint;
+        _referenceLineEndImagePoint = endImagePoint;
+        UpdateReferenceLineOverlay();
+    }
+
     private void NotifyViewStateChanged() => ViewStateChanged?.Invoke();
 
     // ==============================================================================================
@@ -1538,6 +1550,7 @@ public partial class DicomViewPanel : UserControl
             Cursor3DHorizontal.IsVisible = false;
             Cursor3DVertical.IsVisible = false;
             Cursor3DMarker.IsVisible = false;
+            UpdateReferenceLineOverlay();
             return;
         }
 
@@ -1557,6 +1570,30 @@ public partial class DicomViewPanel : UserControl
         Cursor3DHorizontal.IsVisible = isVisible;
         Cursor3DVertical.IsVisible = isVisible;
         Cursor3DMarker.IsVisible = isVisible;
+        UpdateReferenceLineOverlay();
+    }
+
+    private void UpdateReferenceLineOverlay()
+    {
+        if (_referenceLineStartImagePoint is null ||
+            _referenceLineEndImagePoint is null ||
+            (_rawPixelData == null && _volumeSlicePixels == null) ||
+            _zoomFactor <= 0)
+        {
+            ReferenceLinePrimary.IsVisible = false;
+            return;
+        }
+
+        Point start = _referenceLineStartImagePoint.Value;
+        Point end = _referenceLineEndImagePoint.Value;
+        double startX = _panX + (ImageToDisplayX(start.X) * _zoomFactor);
+        double startY = _panY + (ImageToDisplayY(start.Y) * _zoomFactor);
+        double endX = _panX + (ImageToDisplayX(end.X) * _zoomFactor);
+        double endY = _panY + (ImageToDisplayY(end.Y) * _zoomFactor);
+
+        ReferenceLinePrimary.StartPoint = new Point(startX, startY);
+        ReferenceLinePrimary.EndPoint = new Point(endX, endY);
+        ReferenceLinePrimary.IsVisible = true;
     }
 
     private static string FormatStudyDate(string dcmDate)
