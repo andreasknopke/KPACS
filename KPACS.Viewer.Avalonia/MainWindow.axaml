@@ -388,7 +388,8 @@
                                                                   HeadersVisibility="Column"
                                                                   IsReadOnly="True"
                                                                   SelectionMode="Single"
-                                                                  SelectionChanged="OnPatientSelectionChanged">
+                                                                  SelectionChanged="OnPatientSelectionChanged"
+                                                                  DoubleTapped="OnPatientDoubleTapped">
                                                         <DataGrid.Columns>
                                                                 <DataGridTextColumn Header="Patient name" Binding="{Binding PatientName}" Width="*" />
                                                                 <DataGridTextColumn Header="DOB" Binding="{Binding PatientBirthDate}" Width="92" />

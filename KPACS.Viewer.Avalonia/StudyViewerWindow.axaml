@@ -362,6 +362,20 @@
                         <Border Height="1" Background="#334D5F74" />
 
                         <StackPanel Spacing="6">
+                            <TextBlock Text="Research"
+                                       Foreground="#FFB9C4D1"
+                                       FontSize="11"
+                                       FontWeight="SemiBold" />
+                            <Button x:Name="ToolboxRecistSuggestButton"
+                                    Classes="popupAction"
+                                    Content="Suggest RECIST follow-up"
+                                    Click="OnToolboxRecistSuggestClick"
+                                    ToolTip.Tip="Use the selected baseline line or ROI and create a suggested follow-up lesion in this viewport's loaded series." />
+                        </StackPanel>
+
+                        <Border Height="1" Background="#334D5F74" />
+
+                        <StackPanel Spacing="6">
                             <TextBlock Text="View"
                                        Foreground="#FFB9C4D1"
                                        FontSize="11"
@@ -466,6 +480,11 @@
                         <Button Classes="popupAction" Content="Pixel lens" Tag="PixelLens" Click="OnMeasurementToolPopupClick" />
                         <Button Classes="popupAction" Content="Modify" Tag="Modify" Click="OnMeasurementToolPopupClick" />
                         <Button Classes="popupAction" Content="Erase" Tag="Erase" Click="OnMeasurementToolPopupClick" />
+                        <Border Height="1" Background="#334D5F74" Margin="0,4" />
+                        <Button Classes="popupAction"
+                                Content="Suggest RECIST follow-up"
+                                Click="OnToolboxRecistSuggestClick"
+                                ToolTip.Tip="Use the selected baseline line or ROI and create a suggested follow-up lesion in the active viewport series." />
                     </StackPanel>
                 </Border>
             </Popup>

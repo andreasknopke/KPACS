@@ -58,6 +58,7 @@ public partial class DicomViewPanel : UserControl
 
     public sealed record NavigationState(
         double ZoomFactor,
+        double RelativeZoomFactor,
         bool FitToWindow,
         Point CenterImagePoint);
 
@@ -1154,15 +1155,13 @@ public partial class DicomViewPanel : UserControl
     /// </summary>
     public void ApplyFitToWindow()
     {
-        if (_imageWidth == 0 || _imageHeight == 0) return;
+        double fitZoomFactor = GetFitToWindowZoomFactor();
+        if (fitZoomFactor <= 0)
+        {
+            return;
+        }
 
-        double canvasWidth = RootGrid.Bounds.Width;
-        double canvasHeight = RootGrid.Bounds.Height;
-        if (canvasWidth <= 0 || canvasHeight <= 0) return;
-
-        double scaleX = canvasWidth / GetDisplayWidth();
-        double scaleY = canvasHeight / GetDisplayHeight();
-        _zoomFactor = Math.Min(scaleX, scaleY);
+        _zoomFactor = fitZoomFactor;
 
         _fitToWindow = true;
         ApplyZoomTransform();
@@ -1281,7 +1280,16 @@ public partial class DicomViewPanel : UserControl
             centerImagePoint = new Point(x, y);
         }
 
-        state = new NavigationState(_zoomFactor, _fitToWindow, centerImagePoint);
+        double fitZoomFactor = GetFitToWindowZoomFactor();
+        double relativeZoomFactor = fitZoomFactor > 0
+            ? Math.Clamp(_zoomFactor / fitZoomFactor, 0.01, 20.0)
+            : Math.Clamp(_zoomFactor, 0.01, 20.0);
+
+        state = new NavigationState(
+            _zoomFactor,
+            relativeZoomFactor,
+            _fitToWindow,
+            centerImagePoint);
         return true;
     }
 
@@ -1342,7 +1350,11 @@ public partial class DicomViewPanel : UserControl
         }
 
         _fitToWindow = false;
-        _zoomFactor = Math.Clamp(state.ZoomFactor, 0.01, 20.0);
+        double fitZoomFactor = GetFitToWindowZoomFactor();
+        double targetZoomFactor = fitZoomFactor > 0
+            ? fitZoomFactor * Math.Clamp(state.RelativeZoomFactor, 0.01, 20.0)
+            : Math.Clamp(state.ZoomFactor, 0.01, 20.0);
+        _zoomFactor = Math.Clamp(targetZoomFactor, 0.01, 20.0);
         ApplyZoomTransform();
 
         double cx = RootGrid.Bounds.Width / 2.0;
@@ -1382,6 +1394,32 @@ public partial class DicomViewPanel : UserControl
         _panTransform.Y = _panY;
         Update3DCursorOverlay();
         UpdateMeasurementPresentation();
+    }
+
+    private double GetFitToWindowZoomFactor()
+    {
+        if (_imageWidth == 0 || _imageHeight == 0)
+        {
+            return 0;
+        }
+
+        double canvasWidth = RootGrid.Bounds.Width;
+        double canvasHeight = RootGrid.Bounds.Height;
+        if (canvasWidth <= 0 || canvasHeight <= 0)
+        {
+            return 0;
+        }
+
+        double displayWidth = GetDisplayWidth();
+        double displayHeight = GetDisplayHeight();
+        if (displayWidth <= 0 || displayHeight <= 0)
+        {
+            return 0;
+        }
+
+        double scaleX = canvasWidth / displayWidth;
+        double scaleY = canvasHeight / displayHeight;
+        return Math.Min(scaleX, scaleY);
     }
 
     /// <summary>

@@ -92,12 +92,14 @@ The Avalonia application has moved beyond a single-file viewer and now includes 
 - **Study actions**: view, send to remote archive, pseudonymize, and delete study (including multi-select send/delete for local studies)
 - **Background job monitor** for import/send tasks with progress, per-job logs, and optional DICOM communication trace inspection
 - **Multi-window study viewing** with configurable 1-4 viewer windows, persisted placement per viewer, cross-window linked navigation, and a safety-first clear-all-open-viewers flow before opening a new study
-- **Multi-viewport study viewer** with thumbnail strip, standard and custom layouts, double-click single-view focus toggle, LUT switching, stack-tool drag behavior, direct active-viewport selection, and drag-reassignable series layouting
+- **Multi-viewport study viewer** with thumbnail strip, standard and custom layouts, double-click single-view focus toggle, LUT switching, stack-tool drag behavior, direct active-viewport selection, drag-reassignable series layouting, and cross-window series drag/drop with a floating drag preview that stays visible across viewer boundaries
+- **Patient-history comparison workflow** with automatic prior assignment to additional viewer windows, patient-level double-click loading across local repository plus remote archive results, and newest-to-oldest study distribution across comparison viewers/history
 - **Interactive orientation/navigation overlays** including patient left/right markers and a live 3D cursor for cross-view localization within the same viewer or across open viewers, available via `Shift` or the viewport toolbox and now also working with topograms/localizers that share the same frame of reference
 - **Editable measurement tools** including pixel lens, line, angle, rectangular ROI, and polygon ROI, anchored to the referenced slice geometry in patient space
+- **Research measurement workflow** with viewport-accessible `Suggest RECIST follow-up`, patient-space lesion tracking metadata, slice radiomics extraction for ROI measurements, and archiveable research SR export with scene-state payload support
 - **Volume-aware series viewing** for real volumetric CT/MR stacks with cached in-memory voxel volumes, axial/coronal/sagittal reslicing, and slab projection modes
 - **In-panel volume interaction badges** shown only for true volume datasets: orientation switching, projection-mode switching, and drag-adjustable slab thickness in mm
-- **Linked slice synchronization** for same-space series plus lightweight prior-study / CT-MR fallback registration based on cached voxel volumes
+- **Linked slice synchronization** for same-space series plus lightweight prior-study / CT-MR fallback registration based on cached voxel volumes, using fit-relative zoom transfer and temporary sync suspension during layout/maximize transitions to keep panels visually aligned
 - **Key-image workflow** with K-PACS-root Secondary Capture generation, volume-mode key-image toggling, and preview-strip marking only for K-PACS-managed key-image series
 - **Modernized viewer interaction model** with combined navigation by default: left drag for region zoom/pan, wheel for slice scrolling, middle drag for fast stack browsing, right drag for window/level, plus immediate cursor feedback for the active interaction zone
 - **Per-viewport tool UX** with an icon-based toolbox inside each image panel and an auto-hiding workspace dock for layout and future workflow features such as hanging protocols, plugins, exports, and viewer settings
@@ -250,13 +252,24 @@ Additional runtime configuration files are stored alongside the imagebox root:
 - Linked navigation continues to use exact patient-space matching for compatible series and can fall back to a lightweight translation-only volume registration for prior studies or cross-modality comparisons when both sides have volumes.
 - Open viewer windows for the same patient can broadcast linked navigation and Shift-based 3D cursor updates across monitors.
 
+### Research workflow notes
+
+- Use the viewport toolbox or the measurement popup action `Suggest RECIST follow-up` after selecting a baseline line or ROI measurement.
+- RECIST suggestions use the selected baseline measurement as the source lesion and the active or toolbox-target viewport as the follow-up target series.
+- Suggested follow-up measurements retain tracking metadata such as label, timepoint, confidence summary, and patient-space lesion center.
+- ROI-based measurements can also feed slice radiomics extraction and research SR export payloads for downstream review or archival.
+
 ### Viewer interaction notes
 
 - The layout popup supports both standard grids and custom row-based layouts such as `2:3` or `1,2`.
 - Double-clicking a viewport toggles between the current layout and a focused single-view mode.
+- Double-clicking a patient row in the browser loads all matching studies from the local database and remote archive, sorted by study date with the newest study in Viewer 1.
+- When multiple viewer windows are opened, available prior studies are assigned automatically to the additional viewers instead of leaving them blank.
 - Default mouse interaction is combined navigation: left drag = region zoom/pan, wheel = slice scroll, middle drag = fast stack, right drag = window/level.
 - Each viewport provides an icon-based toolbox near the lower edge for measurements, overlay toggle, linked synchronization, and 3D cursor mode.
+- Layout switches, focused-view toggles, and window resize/maximize operations temporarily decouple linked sync, refit loaded panels, and then resume synchronization using relative zoom.
 - The workspace dock at the top of the viewer auto-hides to a small reveal chevron after a short delay and reappears when the pointer approaches the top-center reveal zone, without shifting the image views.
+- Series thumbnails can be dragged within the current viewer or dropped into other open viewer windows.
 - The 3D cursor updates continuously on mouse move while `Shift` is held and can also be armed persistently from the viewport toolbox.
 - Topograms and localizers participate in 3D cursor localization and scout-line style projection as long as they share the same frame of reference with the target series.
 - Key-image preview badges are reserved for K-PACS-managed Secondary Capture series generated under the K-PACS UID root.

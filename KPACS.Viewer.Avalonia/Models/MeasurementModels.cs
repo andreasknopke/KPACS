@@ -21,7 +21,8 @@ public sealed record StudyMeasurement(
     string FrameOfReferenceUid,
     string AcquisitionNumber,
     MeasurementAnchor[] Anchors,
-    string AnnotationText = "")
+    string AnnotationText = "",
+    MeasurementTrackingMetadata? Tracking = null)
 {
     public static StudyMeasurement Create(
         MeasurementKind kind,
@@ -55,6 +56,32 @@ public sealed record StudyMeasurement(
 
     public StudyMeasurement WithAnnotationText(string annotationText) =>
         this with { AnnotationText = annotationText ?? string.Empty };
+
+    public StudyMeasurement WithTracking(MeasurementTrackingMetadata? tracking) =>
+        this with { Tracking = tracking };
+
+    public bool TryGetPatientCenter(out Vector3D center)
+    {
+        Vector3D[] patientPoints = Anchors
+            .Where(anchor => anchor.PatientPoint is not null)
+            .Select(anchor => anchor.PatientPoint!.Value)
+            .ToArray();
+
+        if (patientPoints.Length == 0)
+        {
+            center = default;
+            return false;
+        }
+
+        Vector3D sum = default;
+        foreach (Vector3D point in patientPoints)
+        {
+            sum += point;
+        }
+
+        center = sum / patientPoints.Length;
+        return true;
+    }
 
     public bool TryProjectTo(DicomSpatialMetadata? metadata, out Point[] imagePoints)
     {
