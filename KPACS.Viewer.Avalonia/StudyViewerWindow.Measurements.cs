@@ -12,8 +12,7 @@ public partial class StudyViewerWindow
     private MeasurementTool _measurementTool = MeasurementTool.None;
     private Guid? _selectedMeasurementId;
 
-    private MeasurementTool GetEffectiveMeasurementTool() =>
-        _actionToolbarMode == ActionToolbarMode.Tools ? _measurementTool : MeasurementTool.None;
+    private MeasurementTool GetEffectiveMeasurementTool() => _measurementTool;
 
     private void InitializeMeasurementsUi()
     {
@@ -63,23 +62,36 @@ public partial class StudyViewerWindow
 
         SetMeasurementTool(tool);
         CloseAllActionPopups();
-        ShowActionToolbar();
-        RestartActionToolbarHideTimer();
+        CloseViewportToolbox();
     }
 
     private void SetMeasurementTool(MeasurementTool tool)
     {
         _measurementTool = tool;
+        if (tool != MeasurementTool.None)
+        {
+            _is3DCursorToolArmed = false;
+            Update3DCursorToolButton();
+        }
+
         UpdateMeasurementToolButtons();
         RefreshMeasurementPanels();
     }
 
     private void UpdateMeasurementToolButtons()
     {
-        if (ActionToolsButton is null)
-        {
+        if (ToolboxNavigateButton is null)
             return;
-        }
+
+        ToolboxNavigateButton.IsChecked = _measurementTool == MeasurementTool.None;
+        ToolboxPixelLensButton.IsChecked = _measurementTool == MeasurementTool.PixelLens;
+        ToolboxLineButton.IsChecked = _measurementTool == MeasurementTool.Line;
+        ToolboxAngleButton.IsChecked = _measurementTool == MeasurementTool.Angle;
+        ToolboxAnnotationButton.IsChecked = _measurementTool == MeasurementTool.Annotation;
+        ToolboxRectangleRoiButton.IsChecked = _measurementTool == MeasurementTool.RectangleRoi;
+        ToolboxPolygonRoiButton.IsChecked = _measurementTool == MeasurementTool.PolygonRoi;
+        ToolboxModifyButton.IsChecked = _measurementTool == MeasurementTool.Modify;
+        ToolboxEraseButton.IsChecked = _measurementTool == MeasurementTool.Erase;
     }
 
     private async void OnPanelMeasurementCreated(StudyMeasurement measurement)

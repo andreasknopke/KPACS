@@ -159,6 +159,7 @@ public partial class DicomViewPanel : UserControl
     // ==============================================================================================
 
     private Point _mouseDownPos;
+    private Point _lastPointerPos;
     private bool _isRightDragging;  // window/level
     private bool _isLeftDragging;   // pan or edge-zoom
     private double _startWindowCenter, _startWindowWidth;
@@ -209,6 +210,7 @@ public partial class DicomViewPanel : UserControl
     public DicomSpatialMetadata? SpatialMetadata { get; private set; }
 
     private bool _showOverlay = true;
+    private bool _showToolboxButton = true;
     public bool ShowOverlay
     {
         get => _showOverlay;
@@ -216,6 +218,16 @@ public partial class DicomViewPanel : UserControl
         {
             _showOverlay = value;
             ApplyOverlayVisibility();
+        }
+    }
+
+    public bool ShowToolboxButton
+    {
+        get => _showToolboxButton;
+        set
+        {
+            _showToolboxButton = value;
+            ToolboxButton.IsVisible = value;
         }
     }
 
@@ -248,6 +260,9 @@ public partial class DicomViewPanel : UserControl
     public event Action<DicomHoverInfo?>? HoveredImagePointChanged;
     public event Action<DicomImagePointerInfo>? ImagePointPressed;
     public event Action? ImageDoubleClicked;
+    public event Action? ToolboxRequested;
+
+    public Control ToolboxPlacementTarget => ToolboxButton;
 
     public MouseWheelMode WheelMode { get; set; } = MouseWheelMode.Zoom;
     public ActionToolbarMode ActionMode
@@ -256,7 +271,7 @@ public partial class DicomViewPanel : UserControl
         set
         {
             _actionMode = value;
-            UpdateInteractiveCursor();
+            UpdateInteractiveCursor(_lastPointerPos);
         }
     }
     public int StackItemCount { get; set; } = 1;
@@ -354,17 +369,17 @@ public partial class DicomViewPanel : UserControl
 
     private void UpdateInteractiveCursor(Point? pos = null)
     {
+        if (!IsImageLoaded)
+        {
+            Cursor = new Cursor(StandardCursorType.Arrow);
+            return;
+        }
+
         if (_measurementTool != MeasurementTool.None)
         {
             Cursor = _measurementTool == MeasurementTool.Modify
                 ? new Cursor(StandardCursorType.DragMove)
                 : new Cursor(StandardCursorType.Cross);
-            return;
-        }
-
-        if (IsScrollActionMode())
-        {
-            Cursor = new Cursor(StandardCursorType.SizeNorthSouth);
             return;
         }
 
@@ -1775,6 +1790,16 @@ public partial class DicomViewPanel : UserControl
     {
         var point = e.GetCurrentPoint(RootGrid);
         var pos = e.GetPosition(RootGrid);
+        _lastPointerPos = pos;
+
+        if (point.Properties.IsLeftButtonPressed &&
+            e.KeyModifiers.HasFlag(KeyModifiers.Shift) &&
+            TryGetImagePoint(pos, out Point shiftImagePoint))
+        {
+            ImagePointPressed?.Invoke(new DicomImagePointerInfo(shiftImagePoint, e.KeyModifiers));
+            e.Handled = true;
+            return;
+        }
 
         if (HandleMeasurementPointerPressed(point, pos, e))
         {
@@ -1794,26 +1819,26 @@ public partial class DicomViewPanel : UserControl
             ImagePointPressed?.Invoke(new DicomImagePointerInfo(imagePoint, e.KeyModifiers));
         }
 
-        if (point.Properties.IsRightButtonPressed || (point.Properties.IsLeftButtonPressed && IsWindowActionMode()))
+        if (point.Properties.IsRightButtonPressed)
         {
             BeginWindowLevelDrag(pos, e.Pointer);
+            e.Handled = true;
+        }
+        else if (point.Properties.IsMiddleButtonPressed)
+        {
+            _isLeftDragging = true;
+            _isStackDragging = true;
+            _mouseDownPos = pos;
+            _lastStackMouseY = (int)_mouseDownPos.Y;
+            Cursor = new Cursor(StandardCursorType.SizeNorthSouth);
+            e.Pointer.Capture(RootGrid);
+            _capturedPointer = e.Pointer;
             e.Handled = true;
         }
         else if (point.Properties.IsLeftButtonPressed)
         {
             _isLeftDragging = true;
             _mouseDownPos = pos;
-
-            if (IsScrollActionMode())
-            {
-                _isStackDragging = true;
-                _lastStackMouseY = (int)_mouseDownPos.Y;
-                Cursor = new Cursor(StandardCursorType.SizeNorthSouth);
-                e.Pointer.Capture(RootGrid);
-                _capturedPointer = e.Pointer;
-                e.Handled = true;
-                return;
-            }
 
             // Lock the zone at click time (ported from FZoomRegion := IsCursorInZoomRegion)
             _isEdgeZoom = IsCursorInZoomRegion(_mouseDownPos);
@@ -1843,7 +1868,7 @@ public partial class DicomViewPanel : UserControl
             return;
         }
 
-        if ((e.InitialPressMouseButton == MouseButton.Right || IsWindowActionMode()) && _isRightDragging)
+        if (e.InitialPressMouseButton == MouseButton.Right && _isRightDragging)
         {
             _isRightDragging = false;
             _capturedPointer?.Capture(null);
@@ -1851,7 +1876,7 @@ public partial class DicomViewPanel : UserControl
             UpdateZoneCursor(e.GetPosition(RootGrid));
             e.Handled = true;
         }
-        else if (e.InitialPressMouseButton == MouseButton.Left && _isLeftDragging)
+        else if ((e.InitialPressMouseButton == MouseButton.Left || e.InitialPressMouseButton == MouseButton.Middle) && _isLeftDragging)
         {
             _isLeftDragging = false;
             _isEdgeZoom = false;
@@ -1870,6 +1895,7 @@ public partial class DicomViewPanel : UserControl
     private void OnPointerMoved(object? sender, PointerEventArgs e)
     {
         Point pos = e.GetPosition(RootGrid);
+        _lastPointerPos = pos;
 
         if (HandleMeasurementPointerMoved(pos, e))
         {
@@ -1969,7 +1995,7 @@ public partial class DicomViewPanel : UserControl
             UpdateMeasurementPresentation();
             NotifyViewStateChanged();
         }
-        else if (!_isRightDragging && !_isLeftDragging && _rawPixelData != null)
+        else if (!_isRightDragging && !_isLeftDragging && IsImageLoaded)
         {
             UpdateZoneCursor(pos);
             HoveredImagePointChanged?.Invoke(TryGetImagePoint(pos, out Point imagePoint)
@@ -1981,9 +2007,11 @@ public partial class DicomViewPanel : UserControl
     private void OnPointerExited(object? sender, PointerEventArgs e)
     {
         HandleMeasurementPointerExited();
+        _lastPointerPos = default;
 
         if (!_isRightDragging && !_isLeftDragging)
         {
+            Cursor = new Cursor(StandardCursorType.Arrow);
             HoveredImagePointChanged?.Invoke(null);
         }
     }
@@ -2043,6 +2071,12 @@ public partial class DicomViewPanel : UserControl
 
         int maxIndex = Math.Max(1, StackItemCount - 1);
         return Math.Max(2, (int)Math.Ceiling(200.0 / maxIndex));
+    }
+
+    private void OnToolboxButtonClick(object? sender, RoutedEventArgs e)
+    {
+        ToolboxRequested?.Invoke();
+        e.Handled = true;
     }
 
     private void UpdateDisplayGeometry(double pixelSpacingX, double pixelSpacingY)

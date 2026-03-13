@@ -68,6 +68,23 @@
                 IsVisible="False" />
         </Canvas>
 
+        <Button x:Name="ToolboxButton"
+                Content="☰"
+                Width="30"
+                Height="30"
+                FontSize="15"
+                HorizontalAlignment="Center"
+            VerticalAlignment="Bottom"
+            Margin="0,0,0,8"
+                Padding="0"
+                CornerRadius="15"
+                Background="#C8181818"
+                BorderBrush="#8069DFFF"
+                BorderThickness="1"
+                Foreground="#FFF3F7FF"
+                ToolTip.Tip="Open viewport toolbox"
+                Click="OnToolboxButtonClick" />
+
             <Button x:Name="KeyImageButton"
                 Content="🔑"
                 Width="28"

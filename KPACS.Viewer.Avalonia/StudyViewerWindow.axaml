@@ -67,6 +67,67 @@
             <Setter Property="Padding" Value="12,8" />
             <Setter Property="HorizontalAlignment" Value="Stretch" />
         </Style>
+        <Style Selector="Button.topBarAction">
+            <Setter Property="Background" Value="#FF1B3A4A" />
+            <Setter Property="Foreground" Value="#FFF4FAFF" />
+            <Setter Property="BorderBrush" Value="#FF76C8FF" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Width" Value="38" />
+            <Setter Property="Height" Value="38" />
+        </Style>
+        <Style Selector="Button.workspaceAction">
+            <Setter Property="Background" Value="#FF20262D" />
+            <Setter Property="Foreground" Value="#FFF0F5FA" />
+            <Setter Property="BorderBrush" Value="#554F617E" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="11" />
+            <Setter Property="Padding" Value="6,2" />
+            <Setter Property="MinHeight" Value="24" />
+            <Setter Property="MinWidth" Value="78" />
+            <Setter Property="FontSize" Value="11" />
+        </Style>
+        <Style Selector="Button.workspaceAction:pointerover">
+            <Setter Property="Background" Value="#FF283540" />
+            <Setter Property="BorderBrush" Value="#FF76C8FF" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="MinWidth" Value="108" />
+        </Style>
+        <Style Selector="Button.workspaceAction:disabled">
+            <Setter Property="Opacity" Value="0.55" />
+        </Style>
+        <Style Selector="Border.workspaceDock">
+            <Setter Property="Background" Value="#A811151A" />
+            <Setter Property="BorderBrush" Value="#66303840" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="6,3" />
+            <Setter Property="Opacity" Value="0.58" />
+        </Style>
+        <Style Selector="Border.workspaceDock:pointerover">
+            <Setter Property="Background" Value="#DD11151A" />
+            <Setter Property="BorderBrush" Value="#AA76C8FF" />
+            <Setter Property="Padding" Value="8,5" />
+            <Setter Property="Opacity" Value="0.96" />
+        </Style>
+        <Style Selector="Button.workspaceTeaser">
+            <Setter Property="Background" Value="#A811151A" />
+            <Setter Property="Foreground" Value="#FFDCEFFF" />
+            <Setter Property="BorderBrush" Value="#77546C84" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="0,0,10,10" />
+            <Setter Property="Padding" Value="10,1,10,3" />
+            <Setter Property="MinWidth" Value="34" />
+            <Setter Property="Height" Value="18" />
+            <Setter Property="Opacity" Value="0.84" />
+        </Style>
+        <Style Selector="Button.workspaceTeaser:pointerover">
+            <Setter Property="Background" Value="#DD11151A" />
+            <Setter Property="BorderBrush" Value="#AA76C8FF" />
+            <Setter Property="Opacity" Value="1" />
+        </Style>
         <Style Selector="TextBlock.popupSectionTitle">
             <Setter Property="Foreground" Value="#FFBDBDBD" />
             <Setter Property="FontSize" Value="11" />
@@ -91,11 +152,40 @@
         <Style Selector="ScrollBar:pointerover">
             <Setter Property="Foreground" Value="#FFF0F0F0" />
         </Style>
+        <Style Selector="ToggleButton.toolboxChip">
+            <Setter Property="Background" Value="#2A2F3A" />
+            <Setter Property="Foreground" Value="#FFF2F4F8" />
+            <Setter Property="BorderBrush" Value="#554F617E" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MinWidth" Value="44" />
+            <Setter Property="MinHeight" Value="44" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+        <Style Selector="ToggleButton.toolboxChip:checked">
+            <Setter Property="Background" Value="#FF2C93B7" />
+            <Setter Property="Foreground" Value="#FFF7FBFF" />
+            <Setter Property="BorderBrush" Value="#FF92E6FF" />
+        </Style>
+        <Style Selector="Button.toolboxAction">
+            <Setter Property="Background" Value="#2A2F3A" />
+            <Setter Property="Foreground" Value="#FFF2F4F8" />
+            <Setter Property="BorderBrush" Value="#554F617E" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MinWidth" Value="44" />
+            <Setter Property="MinHeight" Value="44" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
     </Window.Styles>
 
     <Grid RowDefinitions="Auto,Auto,*">
         <Border Grid.Row="0" Background="#FF2A2A2A" Padding="10,8">
-            <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto">
+            <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto,Auto">
                 <TextBlock x:Name="StudyTitleText"
                            FontSize="18" FontWeight="SemiBold" Foreground="White" />
                 <Border Grid.Column="1"
@@ -111,7 +201,13 @@
                                FontSize="12"
                                FontWeight="SemiBold" />
                 </Border>
-                <TextBlock x:Name="StudySubtitleText" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,6,0,0"
+                <Button x:Name="TopBarStudyBrowserButton"
+                        Grid.Column="2"
+                        Classes="topBarAction"
+                        Margin="10,0,0,0"
+                        Click="OnStudyBrowserClick"
+                        ToolTip.Tip="Bring the Study Browser to the front." />
+                <TextBlock x:Name="StudySubtitleText" Grid.Row="1" Grid.ColumnSpan="3" Margin="0,6,0,0"
                            Foreground="#FFAAAAAA" FontSize="12" />
             </Grid>
         </Border>
@@ -144,7 +240,65 @@
                 </Grid>
             </Border>
 
+                <Border x:Name="WorkspaceDock"
+                    Classes="workspaceDock"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Top"
+                    Margin="0,10,0,0"
+                    ZIndex="5"
+                    PointerEntered="OnWorkspaceDockPointerEntered"
+                    PointerExited="OnWorkspaceDockPointerExited">
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                    <TextBlock Text="Workspace"
+                               VerticalAlignment="Center"
+                               Foreground="#FF97A8B7"
+                               FontSize="10"
+                               FontWeight="SemiBold"
+                               Margin="2,0,2,0" />
+                    <WrapPanel Grid.Column="1" Orientation="Horizontal" ItemWidth="92">
+                        <Button x:Name="WorkspaceLayoutButton" Classes="workspaceAction" Click="OnWorkspaceLayoutClick" ToolTip.Tip="Viewer layout presets and custom layouts." />
+                        <Button x:Name="WorkspaceHangingProtocolsButton" Classes="workspaceAction" IsEnabled="False" ToolTip.Tip="Reserved for hanging protocols.">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <TextBlock Text="HP" FontWeight="SemiBold" FontSize="11" />
+                                <TextBlock Text="Hanging" FontSize="11" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="WorkspaceSettingsButton" Classes="workspaceAction" IsEnabled="False" ToolTip.Tip="Reserved for viewer settings.">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <TextBlock Text="⚙" FontSize="11" />
+                                <TextBlock Text="Settings" FontSize="11" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="WorkspacePluginsButton" Classes="workspaceAction" IsEnabled="False" ToolTip.Tip="Reserved for plugin actions.">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <TextBlock Text="◫" FontSize="11" />
+                                <TextBlock Text="Plugins" FontSize="11" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="WorkspaceExportButton" Classes="workspaceAction" IsEnabled="False" ToolTip.Tip="Reserved for export actions.">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <TextBlock Text="⇪" FontSize="11" />
+                                <TextBlock Text="Export" FontSize="11" />
+                            </StackPanel>
+                        </Button>
+                    </WrapPanel>
+                </Grid>
+            </Border>
+
+            <Button x:Name="WorkspaceDockRevealButton"
+                    Classes="workspaceTeaser"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Top"
+                    Margin="0,0,0,0"
+                    ZIndex="6"
+                    IsVisible="False"
+                    Content="▾"
+                    Click="OnWorkspaceDockRevealClick"
+                    PointerEntered="OnWorkspaceDockRevealPointerEntered"
+                    ToolTip.Tip="Show workspace actions" />
+
                 <Border x:Name="ActionToolbarBorder"
+                    IsVisible="False"
                     Background="#EE202020"
                     BorderBrush="#FF4A4A4A"
                     BorderThickness="1"
@@ -173,6 +327,65 @@
                        IsVisible="False"
                        Width="0"
                        Height="0" />
+
+            <Popup x:Name="ViewportToolboxPopup"
+                   Placement="Bottom"
+                   HorizontalOffset="0"
+                   VerticalOffset="8"
+                   IsLightDismissEnabled="True"
+                   Closed="OnViewportToolboxPopupClosed">
+                <Border Background="#E61B2028"
+                        BorderBrush="#667AA6D9"
+                        BorderThickness="1"
+                        CornerRadius="16"
+                        Padding="14,12"
+                        MaxWidth="520"
+                        BoxShadow="0 14 36 0 #70000000">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Viewport toolbox"
+                                   Foreground="#FFF2F4F8"
+                                   FontWeight="SemiBold"
+                                   FontSize="13" />
+
+                        <WrapPanel ItemWidth="50" Orientation="Horizontal">
+                            <ToggleButton x:Name="ToolboxNavigateButton" Classes="toolboxChip" Content="Navigate" Click="OnNavigateToolClick" />
+                            <ToggleButton x:Name="ToolboxPixelLensButton" Classes="toolboxChip" Content="Pixel lens" Tag="PixelLens" Click="OnMeasurementToolPopupClick" />
+                            <ToggleButton x:Name="ToolboxLineButton" Classes="toolboxChip" Content="Line" Tag="Line" Click="OnMeasurementToolPopupClick" />
+                            <ToggleButton x:Name="ToolboxAngleButton" Classes="toolboxChip" Content="Angle" Tag="Angle" Click="OnMeasurementToolPopupClick" />
+                            <ToggleButton x:Name="ToolboxAnnotationButton" Classes="toolboxChip" Content="Text" Tag="Annotation" Click="OnMeasurementToolPopupClick" />
+                            <ToggleButton x:Name="ToolboxRectangleRoiButton" Classes="toolboxChip" Content="Rect ROI" Tag="RectangleRoi" Click="OnMeasurementToolPopupClick" />
+                            <ToggleButton x:Name="ToolboxPolygonRoiButton" Classes="toolboxChip" Content="Polygon ROI" Tag="PolygonRoi" Click="OnMeasurementToolPopupClick" />
+                            <ToggleButton x:Name="ToolboxModifyButton" Classes="toolboxChip" Content="Modify" Tag="Modify" Click="OnMeasurementToolPopupClick" />
+                            <ToggleButton x:Name="ToolboxEraseButton" Classes="toolboxChip" Content="Erase" Tag="Erase" Click="OnMeasurementToolPopupClick" />
+                        </WrapPanel>
+
+                        <Border Height="1" Background="#334D5F74" />
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="View"
+                                       Foreground="#FFB9C4D1"
+                                       FontSize="11"
+                                       FontWeight="SemiBold" />
+                            <WrapPanel ItemWidth="56" Orientation="Horizontal">
+                                <ToggleButton x:Name="ToolboxOverlayToggleButton" Classes="toolboxChip" Content="Overlay" Click="OnToolboxOverlayToggleClick" />
+                            </WrapPanel>
+                        </StackPanel>
+
+                        <Border Height="1" Background="#334D5F74" />
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Linking"
+                                       Foreground="#FFB9C4D1"
+                                       FontSize="11"
+                                       FontWeight="SemiBold" />
+                            <WrapPanel ItemWidth="56" Orientation="Horizontal">
+                                <ToggleButton x:Name="Toolbox3DCursorButton" Classes="toolboxChip" Click="OnToolbox3DCursorClick" />
+                                <ToggleButton x:Name="ToolboxLinkedSyncToggleButton" Classes="toolboxChip" Content="Linked sync" Click="OnToolboxLinkedSyncToggleClick" />
+                            </WrapPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Popup>
 
             <ItemsControl x:Name="ToastItemsControl"
                           HorizontalAlignment="Right"

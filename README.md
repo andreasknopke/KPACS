@@ -93,12 +93,14 @@ The Avalonia application has moved beyond a single-file viewer and now includes 
 - **Background job monitor** for import/send tasks with progress, per-job logs, and optional DICOM communication trace inspection
 - **Multi-window study viewing** with configurable 1-4 viewer windows, persisted placement per viewer, cross-window linked navigation, and a safety-first clear-all-open-viewers flow before opening a new study
 - **Multi-viewport study viewer** with thumbnail strip, standard and custom layouts, double-click single-view focus toggle, LUT switching, stack-tool drag behavior, direct active-viewport selection, and drag-reassignable series layouting
-- **Interactive orientation/navigation overlays** including patient left/right markers and a Shift-held transient 3D cursor for cross-view localization within the same viewer or across open viewers
+- **Interactive orientation/navigation overlays** including patient left/right markers and a live 3D cursor for cross-view localization within the same viewer or across open viewers, available via `Shift` or the viewport toolbox and now also working with topograms/localizers that share the same frame of reference
 - **Editable measurement tools** including pixel lens, line, angle, rectangular ROI, and polygon ROI, anchored to the referenced slice geometry in patient space
 - **Volume-aware series viewing** for real volumetric CT/MR stacks with cached in-memory voxel volumes, axial/coronal/sagittal reslicing, and slab projection modes
 - **In-panel volume interaction badges** shown only for true volume datasets: orientation switching, projection-mode switching, and drag-adjustable slab thickness in mm
 - **Linked slice synchronization** for same-space series plus lightweight prior-study / CT-MR fallback registration based on cached voxel volumes
 - **Key-image workflow** with K-PACS-root Secondary Capture generation, volume-mode key-image toggling, and preview-strip marking only for K-PACS-managed key-image series
+- **Modernized viewer interaction model** with combined navigation by default: left drag for region zoom/pan, wheel for slice scrolling, middle drag for fast stack browsing, right drag for window/level, plus immediate cursor feedback for the active interaction zone
+- **Per-viewport tool UX** with an icon-based toolbox inside each image panel and an auto-hiding workspace dock for layout and future workflow features such as hanging protocols, plugins, exports, and viewer settings
 - **DICOM rendering coverage** including bitmap overlay planes (60xx), embedded overlay bits, RGB Secondary Capture, and multiple YBR photometric interpretations
 - **Search/filter support** in Database, Filesystem, and Network mode, including wildcard remote matching and safe blocking of empty remote queries
 - **Local Storage SCP receiving** backed by fo-dicom with automatic import into the local imagebox
@@ -252,6 +254,11 @@ Additional runtime configuration files are stored alongside the imagebox root:
 
 - The layout popup supports both standard grids and custom row-based layouts such as `2:3` or `1,2`.
 - Double-clicking a viewport toggles between the current layout and a focused single-view mode.
+- Default mouse interaction is combined navigation: left drag = region zoom/pan, wheel = slice scroll, middle drag = fast stack, right drag = window/level.
+- Each viewport provides an icon-based toolbox near the lower edge for measurements, overlay toggle, linked synchronization, and 3D cursor mode.
+- The workspace dock at the top of the viewer auto-hides to a small reveal chevron after a short delay and reappears when the pointer approaches the top-center reveal zone, without shifting the image views.
+- The 3D cursor updates continuously on mouse move while `Shift` is held and can also be armed persistently from the viewport toolbox.
+- Topograms and localizers participate in 3D cursor localization and scout-line style projection as long as they share the same frame of reference with the target series.
 - Key-image preview badges are reserved for K-PACS-managed Secondary Capture series generated under the K-PACS UID root.
 - Bitmap overlays from 60xx groups are rendered directly in the panel, with fallback extraction from embedded overlay bits when needed.
 

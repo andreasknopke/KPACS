@@ -51,7 +51,7 @@ public sealed record DicomSpatialMetadata(
     Vector3D ColumnDirection,
     Vector3D Normal)
 {
-    public bool IsCompatibleWith(DicomSpatialMetadata other)
+    public bool HasSameFrameOfReference(DicomSpatialMetadata other)
     {
         if (string.IsNullOrWhiteSpace(FrameOfReferenceUid) ||
             string.IsNullOrWhiteSpace(other.FrameOfReferenceUid))
@@ -59,7 +59,12 @@ public sealed record DicomSpatialMetadata(
             return false;
         }
 
-        if (!string.Equals(FrameOfReferenceUid, other.FrameOfReferenceUid, StringComparison.Ordinal))
+        return string.Equals(FrameOfReferenceUid, other.FrameOfReferenceUid, StringComparison.Ordinal);
+    }
+
+    public bool IsCompatibleWith(DicomSpatialMetadata other)
+    {
+        if (!HasSameFrameOfReference(other))
         {
             return false;
         }
