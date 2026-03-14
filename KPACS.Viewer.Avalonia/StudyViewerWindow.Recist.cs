@@ -198,7 +198,7 @@ public partial class StudyViewerWindow
         }
         else
         {
-            slot.Panel.ApplyNavigationState(new DicomViewPanel.NavigationState(1.0, false, imagePoint));
+            slot.Panel.ApplyNavigationState(new DicomViewPanel.NavigationState(1.0, 1.0, false, imagePoint));
         }
     }
 

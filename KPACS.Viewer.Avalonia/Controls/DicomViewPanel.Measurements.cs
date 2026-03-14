@@ -83,6 +83,7 @@ public partial class DicomViewPanel
         PixelLensPanel.IsVisible = false;
         _capturedPointer?.Capture(null);
         _capturedPointer = null;
+        DetachCapturedPointerHandlers();
         UpdateMeasurementPresentation();
         UpdateInteractiveCursor();
     }
@@ -122,6 +123,7 @@ public partial class DicomViewPanel
         PixelLensPanel.IsVisible = false;
         _capturedPointer?.Capture(null);
         _capturedPointer = null;
+        DetachCapturedPointerHandlers();
 
         if (!CanRetainVolumeRoiDraftForCurrentSlice())
         {
@@ -289,6 +291,7 @@ public partial class DicomViewPanel
             _measurementEditSession = null;
             _capturedPointer?.Capture(null);
             _capturedPointer = null;
+            DetachCapturedPointerHandlers();
             e.Handled = true;
             return true;
         }
@@ -298,6 +301,7 @@ public partial class DicomViewPanel
             FinalizeDragMeasurement();
             _capturedPointer?.Capture(null);
             _capturedPointer = null;
+            DetachCapturedPointerHandlers();
             e.Handled = true;
             return true;
         }

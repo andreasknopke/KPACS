@@ -67,17 +67,113 @@
             <Setter Property="Padding" Value="12,8" />
             <Setter Property="HorizontalAlignment" Value="Stretch" />
         </Style>
+        <Style Selector="Button.topBarAction">
+            <Setter Property="Background" Value="#FF1B3A4A" />
+            <Setter Property="Foreground" Value="#FFF4FAFF" />
+            <Setter Property="BorderBrush" Value="#FF76C8FF" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Width" Value="38" />
+            <Setter Property="Height" Value="38" />
+        </Style>
+        <Style Selector="Button.workspaceAction">
+            <Setter Property="Background" Value="#FF20262D" />
+            <Setter Property="Foreground" Value="#FFF0F5FA" />
+            <Setter Property="BorderBrush" Value="#554F617E" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="11" />
+            <Setter Property="Padding" Value="6,2" />
+            <Setter Property="MinHeight" Value="24" />
+            <Setter Property="MinWidth" Value="78" />
+            <Setter Property="FontSize" Value="11" />
+        </Style>
+        <Style Selector="Button.workspaceAction:pointerover">
+            <Setter Property="Background" Value="#FF283540" />
+            <Setter Property="BorderBrush" Value="#FF76C8FF" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="MinWidth" Value="108" />
+        </Style>
+        <Style Selector="Button.workspaceAction:disabled">
+            <Setter Property="Opacity" Value="0.55" />
+        </Style>
+        <Style Selector="Border.workspaceDock">
+            <Setter Property="Background" Value="#A811151A" />
+            <Setter Property="BorderBrush" Value="#66303840" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="6,3" />
+            <Setter Property="Opacity" Value="0.58" />
+        </Style>
+        <Style Selector="Border.workspaceDock:pointerover">
+            <Setter Property="Background" Value="#DD11151A" />
+            <Setter Property="BorderBrush" Value="#AA76C8FF" />
+            <Setter Property="Padding" Value="8,5" />
+            <Setter Property="Opacity" Value="0.96" />
+        </Style>
+        <Style Selector="Button.workspaceTeaser">
+            <Setter Property="Background" Value="#A811151A" />
+            <Setter Property="Foreground" Value="#FFDCEFFF" />
+            <Setter Property="BorderBrush" Value="#77546C84" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="0,0,10,10" />
+            <Setter Property="Padding" Value="10,1,10,3" />
+            <Setter Property="MinWidth" Value="34" />
+            <Setter Property="Height" Value="18" />
+            <Setter Property="Opacity" Value="0.84" />
+        </Style>
+        <Style Selector="Button.workspaceTeaser:pointerover">
+            <Setter Property="Background" Value="#DD11151A" />
+            <Setter Property="BorderBrush" Value="#AA76C8FF" />
+            <Setter Property="Opacity" Value="1" />
+        </Style>
         <Style Selector="TextBlock.popupSectionTitle">
             <Setter Property="Foreground" Value="#FFBDBDBD" />
             <Setter Property="FontSize" Value="11" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Margin" Value="0,0,0,4" />
         </Style>
+        <Style Selector="TextBox">
+            <Setter Property="Background" Value="#FF2A2A2A" />
+            <Setter Property="Foreground" Value="#FFF2F2F2" />
+            <Setter Property="BorderBrush" Value="#FF6A6A6A" />
+            <Setter Property="CaretBrush" Value="#FF35C7FF" />
+            <Setter Property="SelectionBrush" Value="#6655A8FF" />
+        </Style>
+        <Style Selector="TextBox:focus">
+            <Setter Property="BorderBrush" Value="#FF7FD9FF" />
+        </Style>
+        <Style Selector="ScrollBar">
+            <Setter Property="Background" Value="#FF2A2A2A" />
+            <Setter Property="Foreground" Value="#FFB8B8B8" />
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="ScrollBar:pointerover">
+            <Setter Property="Foreground" Value="#FFF0F0F0" />
+        </Style>
+        <Style Selector="ToggleButton.toolboxChip">
+            <Setter Property="Background" Value="#2A2F3A" />
+            <Setter Property="Foreground" Value="#FFF2F4F8" />
+            <Setter Property="BorderBrush" Value="#554F617E" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MinWidth" Value="44" />
+            <Setter Property="MinHeight" Value="44" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+        <Style Selector="ToggleButton.toolboxChip:checked">
+            <Setter Property="Background" Value="#FF2C93B7" />
+            <Setter Property="Foreground" Value="#FFF7FBFF" />
+            <Setter Property="BorderBrush" Value="#FF92E6FF" />
+        </Style>
     </Window.Styles>
 
     <Grid RowDefinitions="Auto,Auto,*">
         <Border Grid.Row="0" Background="#FF2A2A2A" Padding="10,8">
-            <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto">
+            <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto,Auto">
                 <TextBlock x:Name="StudyTitleText"
                            FontSize="18" FontWeight="SemiBold" Foreground="White" />
                 <Border Grid.Column="1"
@@ -93,7 +189,13 @@
                                FontSize="12"
                                FontWeight="SemiBold" />
                 </Border>
-                <TextBlock x:Name="StudySubtitleText" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,6,0,0"
+                <Button x:Name="TopBarStudyBrowserButton"
+                        Grid.Column="2"
+                        Classes="topBarAction"
+                        Margin="10,0,0,0"
+                        Click="OnStudyBrowserClick"
+                        ToolTip.Tip="Bring the Study Browser to the front." />
+                <TextBlock x:Name="StudySubtitleText" Grid.Row="1" Grid.ColumnSpan="3" Margin="0,6,0,0"
                            Foreground="#FFAAAAAA" FontSize="12" />
             </Grid>
         </Border>
@@ -125,7 +227,65 @@
                 </Grid>
             </Border>
 
+            <Border x:Name="WorkspaceDock"
+                    Classes="workspaceDock"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Top"
+                    Margin="0,10,0,0"
+                    ZIndex="5"
+                    PointerEntered="OnWorkspaceDockPointerEntered"
+                    PointerExited="OnWorkspaceDockPointerExited">
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                    <TextBlock Text="Workspace"
+                               VerticalAlignment="Center"
+                               Foreground="#FF97A8B7"
+                               FontSize="10"
+                               FontWeight="SemiBold"
+                               Margin="2,0,2,0" />
+                    <WrapPanel Grid.Column="1" Orientation="Horizontal" ItemWidth="92">
+                        <Button x:Name="WorkspaceLayoutButton" Classes="workspaceAction" Click="OnWorkspaceLayoutClick" ToolTip.Tip="Viewer layout presets and custom layouts." />
+                        <Button x:Name="WorkspaceHangingProtocolsButton" Classes="workspaceAction" IsEnabled="False" ToolTip.Tip="Reserved for hanging protocols.">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <TextBlock Text="HP" FontWeight="SemiBold" FontSize="11" />
+                                <TextBlock Text="Hanging" FontSize="11" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="WorkspaceSettingsButton" Classes="workspaceAction" IsEnabled="False" ToolTip.Tip="Reserved for viewer settings.">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <TextBlock Text="⚙" FontSize="11" />
+                                <TextBlock Text="Settings" FontSize="11" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="WorkspacePluginsButton" Classes="workspaceAction" IsEnabled="False" ToolTip.Tip="Reserved for plugin actions.">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <TextBlock Text="🧩" FontSize="11" />
+                                <TextBlock Text="Plugins" FontSize="11" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="WorkspaceExportButton" Classes="workspaceAction" IsEnabled="False" ToolTip.Tip="Reserved for export actions.">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <TextBlock Text="⬆" FontSize="11" />
+                                <TextBlock Text="Export" FontSize="11" />
+                            </StackPanel>
+                        </Button>
+                    </WrapPanel>
+                </Grid>
+            </Border>
+
+            <Button x:Name="WorkspaceDockRevealButton"
+                    Classes="workspaceTeaser"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Top"
+                    Margin="0,0,0,0"
+                    ZIndex="6"
+                    IsVisible="False"
+                    Content="⌄"
+                    Click="OnWorkspaceDockRevealClick"
+                    PointerEntered="OnWorkspaceDockRevealPointerEntered"
+                    ToolTip.Tip="Show workspace actions" />
+
                 <Border x:Name="ActionToolbarBorder"
+                    IsVisible="False"
                     Background="#EE202020"
                     BorderBrush="#FF4A4A4A"
                     BorderThickness="1"
@@ -309,20 +469,30 @@
                     BorderThickness="1"
                     CornerRadius="12"
                     ZIndex="4">
+                <Border.RenderTransform>
+                    <TranslateTransform />
+                </Border.RenderTransform>
                 <StackPanel Spacing="8">
                     <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                        <TextBlock x:Name="VolumeRoiDraftTitleText"
-                                   Text="3D ROI draft"
-                                   Foreground="#FFF6FBFF"
-                                   FontWeight="SemiBold"
-                                   FontSize="13"
-                                   VerticalAlignment="Center" />
+                        <StackPanel x:Name="VolumeRoiDraftDragHandle"
+                                    Spacing="2"
+                                    Cursor="SizeAll"
+                                    PointerPressed="OnVolumeRoiDraftHeaderPointerPressed"
+                                    PointerMoved="OnVolumeRoiDraftHeaderPointerMoved"
+                                    PointerReleased="OnVolumeRoiDraftHeaderPointerReleased">
+                            <TextBlock x:Name="VolumeRoiDraftTitleText"
+                                       Text="3D ROI draft"
+                                       Foreground="#FFF6FBFF"
+                                       FontWeight="SemiBold"
+                                       FontSize="13" />
+                        </StackPanel>
                         <ToggleButton x:Name="VolumeRoiAddButton"
                                       Grid.Column="1"
                                       Content="Add"
-                                      Width="40"
+                                      Width="44"
                                       Height="26"
-                                      MinWidth="40"
+                                      MinWidth="44"
+                                      Margin="0,0,10,0"
                                       Click="OnVolumeRoiAddClick"
                                       ToolTip.Tip="Add another region to the 3D ROI draft instead of replacing the current slice contour." />
                         <ToggleButton x:Name="VolumeRoiDraftPinButton"

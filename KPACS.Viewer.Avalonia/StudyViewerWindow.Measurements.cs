@@ -15,8 +15,7 @@ public partial class StudyViewerWindow
     private Guid? _selectedMeasurementId;
     private bool _isApplyingPolygonAutoOutlineCorrection;
 
-    private MeasurementTool GetEffectiveMeasurementTool() =>
-        _actionToolbarMode == ActionToolbarMode.Tools ? _measurementTool : MeasurementTool.None;
+    private MeasurementTool GetEffectiveMeasurementTool() => _measurementTool;
 
     private void InitializeMeasurementsUi()
     {
@@ -64,7 +63,7 @@ public partial class StudyViewerWindow
 
     private void OnMeasurementToolPopupClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (sender is not Avalonia.Controls.Button button || button.Tag is not string tag)
+        if (sender is not Control button || button.Tag is not string tag)
         {
             return;
         }
@@ -75,14 +74,21 @@ public partial class StudyViewerWindow
         }
 
         SetMeasurementTool(tool);
+        CloseViewportToolbox();
         CloseAllActionPopups();
-        ShowActionToolbar();
         RestartActionToolbarHideTimer();
+        e.Handled = true;
     }
 
     private void SetMeasurementTool(MeasurementTool tool)
     {
         _measurementTool = tool;
+        if (tool != MeasurementTool.None)
+        {
+            _is3DCursorToolArmed = false;
+            Update3DCursorToolButton();
+        }
+
         UpdateMeasurementToolButtons();
         RefreshMeasurementPanels();
     }

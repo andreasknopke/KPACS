@@ -1367,6 +1367,7 @@ public partial class MainWindow : Window
     private async void OnDeleteStudyClick(object? sender, RoutedEventArgs e) => await DeleteSelectedStudyAsync();
 
     private async void OnOpenViewerClick(object? sender, RoutedEventArgs e) => await OpenSelectedStudyAsync();
+    private async void OnPatientDoubleTapped(object? sender, TappedEventArgs e) => await OpenSelectedPatientStudiesAsync();
 
     private void OnStudyGridPointerPressed(object? sender, PointerPressedEventArgs e)
     {
@@ -1927,7 +1928,10 @@ public partial class MainWindow : Window
 
         for (int index = 0; index < viewerCount; index++)
         {
-            bool startBlank = priorsAvailable && index > 0;
+            PriorStudySummary? assignedPriorStudy = index > 0 && index - 1 < priorStudies.Count
+                ? priorStudies[index - 1]
+                : null;
+            bool startBlank = assignedPriorStudy is not null || (priorsAvailable && index > 0);
             var viewer = new StudyViewerWindow(
                 new ViewerStudyContext
                 {
@@ -1936,6 +1940,7 @@ public partial class MainWindow : Window
                     LoadPriorStudiesAsync = cancellationToken => _app.PriorStudyLookupService.FindPriorStudiesAsync(details.Study, priorLookupMode, cancellationToken),
                     LoadPriorStudyPreviewAsync = (priorStudy, onUpdated, cancellationToken) => _app.PriorStudyLookupService.LoadPriorStudyPreviewAsync(priorStudy, onUpdated, cancellationToken),
                     InitialPriorStudies = priorStudies,
+                    InitialAssignedPriorStudy = assignedPriorStudy,
                     StartBlank = startBlank,
                     LayoutRows = 1,
                     LayoutColumns = 1,
@@ -1948,11 +1953,214 @@ public partial class MainWindow : Window
         }
 
         string statusMessage = priorsAvailable && viewerCount > 1
-            ? $"Opened study in Viewer 1. Viewers 2-{viewerCount} are ready for manual prior comparison."
+            ? $"Opened study in Viewer 1 and auto-assigned priors to the comparison viewers."
             : viewerCount == 1
                 ? "Opened study in Viewer 1."
                 : $"Opened study in {viewerCount} viewer windows.";
         SetStatus(statusMessage);
+    }
+
+    private async Task OpenSelectedPatientStudiesAsync()
+    {
+        PatientRow? selectedPatient = PatientGrid?.SelectedItem as PatientRow;
+        if (selectedPatient is null)
+        {
+            SetStatus("Select a patient first.");
+            ShowToast("Select a patient first.", ToastSeverity.Warning);
+            return;
+        }
+
+        SetStatus($"Loading all studies for {selectedPatient.PatientName}...");
+
+        List<PatientStudyLaunchCandidate> candidates = await LoadPatientStudyLaunchCandidatesAsync(selectedPatient);
+        if (candidates.Count == 0)
+        {
+            SetStatus($"No studies found for {selectedPatient.PatientName}.");
+            ShowToast($"No studies found for {selectedPatient.PatientName}.", ToastSeverity.Warning);
+            return;
+        }
+
+        PatientStudyLaunchCandidate primaryCandidate = candidates[0];
+        (StudyDetails? details, RemoteStudyRetrievalSession? retrievalSession) = await ResolveViewerLaunchStudyAsync(primaryCandidate);
+        if (details is null)
+        {
+            SetStatus($"The newest study for {selectedPatient.PatientName} could not be loaded.");
+            ShowToast($"The newest study for {selectedPatient.PatientName} could not be loaded.", ToastSeverity.Error);
+            return;
+        }
+
+        if (!primaryCandidate.IsRemote && details.Study.Availability != StudyAvailability.Imported)
+        {
+            bool queued = await _app.ImportService.QueueStudyImportAsync(details);
+            if (queued)
+            {
+                ShowToast($"Opening {selectedPatient.PatientName}. Local files are being copied into the imagebox in the background.", ToastSeverity.Info, TimeSpan.FromSeconds(6));
+            }
+        }
+
+        List<PriorStudySummary> priorStudies = candidates
+            .Skip(1)
+            .Select(candidate => ToPriorStudySummary(candidate.Study, candidate.RemoteResult))
+            .ToList();
+
+        PriorStudyLookupMode priorLookupMode = primaryCandidate.IsRemote
+            ? PriorStudyLookupMode.RemoteArchive
+            : PriorStudyLookupMode.LocalRepository;
+
+        OpenStudyInViewerWindows(details, retrievalSession, priorLookupMode, priorStudies);
+
+        int additionalCount = Math.Max(0, candidates.Count - 1);
+        SetStatus(additionalCount == 0
+            ? $"Opened the newest study for {selectedPatient.PatientName}."
+            : $"Opened the newest study for {selectedPatient.PatientName} and queued {additionalCount} additional studies for comparison viewers/history.");
+    }
+
+    private async Task<List<PatientStudyLaunchCandidate>> LoadPatientStudyLaunchCandidatesAsync(PatientRow selectedPatient)
+    {
+        StudyQuery query = BuildPatientStudyQuery(selectedPatient);
+        bool includeRemoteStudies = _browserMode == BrowserMode.Network;
+
+        List<StudyListItem> localStudies = [];
+        try
+        {
+            localStudies = await _app.Repository.SearchStudiesAsync(query);
+        }
+        catch
+        {
+            localStudies = [];
+        }
+
+        List<RemoteStudySearchResult> remoteStudies = [];
+        if (includeRemoteStudies)
+        {
+            try
+            {
+                remoteStudies = await _app.RemoteStudyBrowserService.SearchStudiesAsync(query);
+            }
+            catch
+            {
+                remoteStudies = [];
+            }
+        }
+
+        Dictionary<string, PatientStudyLaunchCandidate> candidatesByStudyUid = new(StringComparer.Ordinal);
+
+        foreach (StudyListItem study in localStudies.Where(study => MatchesPatient(selectedPatient, study)))
+        {
+            candidatesByStudyUid[study.StudyInstanceUid] = new PatientStudyLaunchCandidate(study, null);
+        }
+
+        foreach (RemoteStudySearchResult result in remoteStudies.Where(result => MatchesPatient(selectedPatient, result.Study)))
+        {
+            if (candidatesByStudyUid.ContainsKey(result.Study.StudyInstanceUid))
+            {
+                continue;
+            }
+
+            candidatesByStudyUid[result.Study.StudyInstanceUid] = new PatientStudyLaunchCandidate(result.Study, result);
+        }
+
+        return candidatesByStudyUid.Values
+            .OrderByDescending(candidate => candidate.Study.StudyDate, StringComparer.Ordinal)
+            .ThenBy(candidate => candidate.IsRemote)
+            .ThenBy(candidate => candidate.Study.StudyInstanceUid, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static StudyQuery BuildPatientStudyQuery(PatientRow patient)
+    {
+        string patientId = patient.PatientId?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(patientId))
+        {
+            return new StudyQuery
+            {
+                PatientId = patientId,
+            };
+        }
+
+        return new StudyQuery
+        {
+            PatientName = patient.PatientName?.Trim() ?? string.Empty,
+            PatientBirthDate = NormalizePatientBirthDate(patient.PatientBirthDate),
+        };
+    }
+
+    private async Task<(StudyDetails? Details, RemoteStudyRetrievalSession? RetrievalSession)> ResolveViewerLaunchStudyAsync(PatientStudyLaunchCandidate candidate)
+    {
+        if (!candidate.IsRemote)
+        {
+            StudyDetails? details = candidate.Study.StudyKey > 0
+                ? await _app.Repository.GetStudyDetailsAsync(candidate.Study.StudyKey)
+                : await _app.Repository.GetStudyDetailsByStudyInstanceUidAsync(candidate.Study.StudyInstanceUid);
+            return (details, null);
+        }
+
+        RemoteStudySearchResult remoteStudy = candidate.RemoteResult!;
+        try
+        {
+            (StudyDetails details, List<RemoteSeriesPreview> seriesPreviews) = await _app.RemoteStudyBrowserService.LoadStudyPreviewAsync(remoteStudy);
+            RemoteStudyRetrievalSession retrievalSession = await _app.RemoteStudyBrowserService.CreateRetrievalSessionAsync(
+                remoteStudy,
+                details,
+                seriesPreviews,
+                CancellationToken.None);
+            retrievalSession.StatusChanged += OnRemoteRetrievalStatusChanged;
+            return (retrievalSession.StudyDetails, retrievalSession);
+        }
+        catch (Exception ex)
+        {
+            ShowToast($"Remote study preview failed: {ex.Message}", ToastSeverity.Error, TimeSpan.FromSeconds(8));
+            return (null, null);
+        }
+    }
+
+    private static PriorStudySummary ToPriorStudySummary(StudyListItem study, RemoteStudySearchResult? remoteResult) => new()
+    {
+        StudyKey = study.StudyKey,
+        StudyInstanceUid = study.StudyInstanceUid,
+        StudyDescription = study.StudyDescription,
+        Modalities = study.Modalities,
+        StudyDate = study.StudyDate,
+        SourceLabel = remoteResult?.Archive.Name ?? study.StoragePath,
+        IsRemote = remoteResult is not null,
+        ArchiveId = remoteResult?.Archive.Id ?? string.Empty,
+    };
+
+    private static bool MatchesPatient(PatientRow patient, StudyListItem study)
+    {
+        if (!string.IsNullOrWhiteSpace(patient.PatientId) && !string.IsNullOrWhiteSpace(study.PatientId))
+        {
+            return string.Equals(patient.PatientId.Trim(), study.PatientId.Trim(), StringComparison.OrdinalIgnoreCase);
+        }
+
+        bool sameName = string.Equals(patient.PatientName.Trim(), study.PatientName.Trim(), StringComparison.OrdinalIgnoreCase);
+        if (!sameName)
+        {
+            return false;
+        }
+
+        string patientBirthDate = NormalizePatientBirthDate(patient.PatientBirthDate);
+        return string.IsNullOrWhiteSpace(patientBirthDate)
+            || string.IsNullOrWhiteSpace(study.PatientBirthDate)
+            || string.Equals(patientBirthDate, study.PatientBirthDate.Trim(), StringComparison.Ordinal);
+    }
+
+    private static string NormalizePatientBirthDate(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        string trimmed = value.Trim();
+        if (DateOnly.TryParse(trimmed, out DateOnly parsed))
+        {
+            return parsed.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return trimmed.Replace(".", string.Empty, StringComparison.Ordinal)
+            .Replace("-", string.Empty, StringComparison.Ordinal)
+            .Replace("/", string.Empty, StringComparison.Ordinal);
     }
 
     private void CloseManagedViewerWindows()
@@ -2930,6 +3138,11 @@ public partial class MainWindow : Window
         public string LatestStudyDate { get; init; } = string.Empty;
         public string Modalities { get; init; } = string.Empty;
         public string SelectionKey => $"{PatientId}\u001F{PatientName}";
+    }
+
+    private sealed record PatientStudyLaunchCandidate(StudyListItem Study, RemoteStudySearchResult? RemoteResult)
+    {
+        public bool IsRemote => RemoteResult is not null;
     }
 
     private sealed class SeriesGridRow

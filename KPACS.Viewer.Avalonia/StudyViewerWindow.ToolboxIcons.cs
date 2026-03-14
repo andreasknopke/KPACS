@@ -14,7 +14,9 @@ public partial class StudyViewerWindow
 
     private void InitializeToolboxIcons()
     {
+        ConfigureIconButton(TopBarStudyBrowserButton, CreateStudyBrowserIcon(), "Bring the Study Browser to the front.");
         ConfigureIconButton(StudyBrowserButton, CreateStudyBrowserIcon(), "Bring the Study Browser to the front.");
+        ConfigureLabeledIconButton(WorkspaceLayoutButton, CreateLayoutIcon(2, 2), "Layout", "Viewer layout presets and custom layouts.");
         ConfigureIconButton(ToolboxNavigateButton, CreateNavigateIcon(), "Navigate: left drag zoom/pan, wheel scroll, middle drag fast stack, right drag window/level.");
         ConfigureIconButton(ToolboxPixelLensButton, CreatePixelLensIcon(), "Pixel lens.");
         ConfigureIconButton(ToolboxLineButton, CreateLineMeasureIcon(), "Line measurement.");

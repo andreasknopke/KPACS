@@ -14,12 +14,16 @@ public partial class StudyViewerWindow
     private const double DefaultVolumeRoiPreviewYaw = -0.55;
     private const double DefaultVolumeRoiPreviewPitch = 0.38;
     private const int SavedVolumeRoiPreviewSampleCount = 40;
+    private Point _volumeRoiPreviewOffset;
     private bool _volumeRoiPreviewPinned;
     private double _volumeRoiPreviewYaw = DefaultVolumeRoiPreviewYaw;
     private double _volumeRoiPreviewPitch = DefaultVolumeRoiPreviewPitch;
     private DicomViewPanel.VolumeRoiDraftPreview? _currentVolumeRoiDraftPreview;
     private DicomViewPanel.VolumeRoiDraftPreview? _lastVolumeRoiPreviewSnapshot;
     private bool _lastVolumeRoiPreviewWasDraft;
+    private IPointer? _volumeRoiPreviewDragPointer;
+    private Point _volumeRoiPreviewDragStart;
+    private Point _volumeRoiPreviewDragStartOffset;
 
     private void RefreshVolumeRoiDraftPanel()
     {
@@ -81,6 +85,7 @@ public partial class StudyViewerWindow
             : "Selected 3D ROI model preview. Scroll through the series to highlight the current slice contour; choose another measurement to hide this panel.";
         RenderVolumeRoiDraftPreview(preview);
         VolumeRoiDraftPanel.IsVisible = true;
+        ApplyVolumeRoiDraftPanelOffset();
     }
 
     private void HideVolumeRoiDraftPanel()
@@ -178,6 +183,93 @@ public partial class StudyViewerWindow
 
         SaveViewerSettings();
         e.Handled = true;
+    }
+
+    private void OnVolumeRoiDraftHeaderPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!VolumeRoiDraftPanel.IsVisible || !e.GetCurrentPoint(VolumeRoiDraftDragHandle).Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        _volumeRoiPreviewDragPointer = e.Pointer;
+        _volumeRoiPreviewDragPointer.Capture(VolumeRoiDraftDragHandle);
+        _volumeRoiPreviewDragStart = e.GetPosition(ViewerContentHost);
+        _volumeRoiPreviewDragStartOffset = _volumeRoiPreviewOffset;
+        e.Handled = true;
+    }
+
+    private void OnVolumeRoiDraftHeaderPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (!ReferenceEquals(_volumeRoiPreviewDragPointer, e.Pointer))
+        {
+            return;
+        }
+
+        Point current = e.GetPosition(ViewerContentHost);
+        Vector delta = current - _volumeRoiPreviewDragStart;
+        _volumeRoiPreviewOffset = new Point(
+            _volumeRoiPreviewDragStartOffset.X + delta.X,
+            _volumeRoiPreviewDragStartOffset.Y + delta.Y);
+        ApplyVolumeRoiDraftPanelOffset();
+        e.Handled = true;
+    }
+
+    private void OnVolumeRoiDraftHeaderPointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (!ReferenceEquals(_volumeRoiPreviewDragPointer, e.Pointer))
+        {
+            return;
+        }
+
+        _volumeRoiPreviewDragPointer.Capture(null);
+        _volumeRoiPreviewDragPointer = null;
+        ApplyVolumeRoiDraftPanelOffset();
+        SaveViewerSettings();
+        e.Handled = true;
+    }
+
+    private void ApplyVolumeRoiDraftPanelOffset()
+    {
+        if (VolumeRoiDraftPanel is null || ViewerContentHost is null)
+        {
+            return;
+        }
+
+        TranslateTransform transform = EnsureVolumeRoiDraftPanelTransform();
+
+        double panelWidth = VolumeRoiDraftPanel.Bounds.Width;
+        double panelHeight = VolumeRoiDraftPanel.Bounds.Height;
+        double hostWidth = ViewerContentHost.Bounds.Width;
+        double hostHeight = ViewerContentHost.Bounds.Height;
+        Thickness margin = VolumeRoiDraftPanel.Margin;
+
+        if (hostWidth <= 0 || hostHeight <= 0 || panelWidth <= 0 || panelHeight <= 0)
+        {
+            transform.X = _volumeRoiPreviewOffset.X;
+            transform.Y = _volumeRoiPreviewOffset.Y;
+            return;
+        }
+
+        double defaultRight = Math.Max(0, hostWidth - panelWidth - margin.Left);
+        double defaultTop = Math.Max(0, hostHeight - panelHeight - margin.Bottom);
+        double clampedX = Math.Clamp(_volumeRoiPreviewOffset.X, 0, defaultRight);
+        double clampedY = Math.Clamp(_volumeRoiPreviewOffset.Y, -defaultTop, 0);
+        _volumeRoiPreviewOffset = new Point(clampedX, clampedY);
+        transform.X = clampedX;
+        transform.Y = clampedY;
+    }
+
+    private TranslateTransform EnsureVolumeRoiDraftPanelTransform()
+    {
+        if (VolumeRoiDraftPanel.RenderTransform is TranslateTransform transform)
+        {
+            return transform;
+        }
+
+        transform = new TranslateTransform();
+        VolumeRoiDraftPanel.RenderTransform = transform;
+        return transform;
     }
 
     private bool TryCreateVolumeRoiMeasurementPreview(StudyMeasurement measurement, out DicomViewPanel.VolumeRoiDraftPreview preview)
