@@ -92,9 +92,14 @@ The Avalonia application has moved beyond a single-file viewer and now includes 
 - **Study actions**: view, send to remote archive, pseudonymize, and delete study (including multi-select send/delete for local studies)
 - **Background job monitor** for import/send tasks with progress, per-job logs, and optional DICOM communication trace inspection
 - **Multi-window study viewing** with configurable 1-4 viewer windows, persisted placement per viewer, cross-window linked navigation, and a safety-first clear-all-open-viewers flow before opening a new study
-- **Multi-viewport study viewer** with thumbnail strip, standard and custom layouts, double-click single-view focus toggle, LUT switching, stack-tool drag behavior, direct active-viewport selection, and drag-reassignable series layouting
-- **Interactive orientation/navigation overlays** including patient left/right markers and a Shift-held transient 3D cursor for cross-view localization within the same viewer or across open viewers
-- **Editable measurement tools** including pixel lens, line, angle, rectangular ROI, and polygon ROI, anchored to the referenced slice geometry in patient space
+- **Multi-viewport study viewer** with thumbnail strip, standard and custom layouts, double-click single-view focus toggle, LUT switching, stack-tool drag behavior, direct active-viewport selection, drag-reassignable series layouting, and cross-window series drag/drop with a floating drag preview that stays visible across viewer boundaries
+- **Patient-history comparison workflow** with automatic prior assignment to additional viewer windows, patient-level double-click loading across local repository plus remote archive results, and newest-to-oldest study distribution across comparison viewers/history
+- **Interactive orientation/navigation overlays** including patient left/right markers and a live 3D cursor for cross-view localization within the same viewer or across open viewers, available via `Shift` or the viewport toolbox and now also working with topograms/localizers that share the same frame of reference
+- **Expanded measurement toolkit** including pixel lens, line, angle, annotation, rectangle ROI, ellipse ROI, polygon ROI, erase, and modify/nudge workflows, all anchored to the referenced slice geometry in patient space
+- **ROI analytics panel** with floating histogram/distribution details, draggable labels, pin/collapse persistence, and modality-aware statistics such as CT HU summaries, MR intensity summaries, and slice-level radiomics-style percentiles and spread metrics
+- **Semi-automatic ROI outlining** for polygon and volumetric ROI workflows via double-click seed detection, followed by interactive grow/shrink sensitivity correction for fast lesion cleanup
+- **True multi-slice 3D ROI workflow** with slice-to-slice contour drafting, interpolation between source slices, rotatable mesh preview, persistent/pinnable 3D model panel, and additive multi-component capture so disconnected structures can remain separate within one saved ROI model
+- **Research measurement workflow** with viewport-accessible `Suggest RECIST follow-up`, patient-space lesion tracking metadata, slice radiomics extraction for ROI measurements, and archiveable research SR export with scene-state payload support
 - **Volume-aware series viewing** for real volumetric CT/MR stacks with cached in-memory voxel volumes, axial/coronal/sagittal reslicing, and slab projection modes
 - **In-panel volume interaction badges** shown only for true volume datasets: orientation switching, projection-mode switching, and drag-adjustable slab thickness in mm
 - **Linked slice synchronization** for same-space series plus lightweight prior-study / CT-MR fallback registration based on cached voxel volumes
@@ -247,6 +252,28 @@ Additional runtime configuration files are stored alongside the imagebox root:
 - Dragging on the projection badge changes slab thickness in millimeters; holding Shift while dragging enables finer adjustment.
 - Linked navigation continues to use exact patient-space matching for compatible series and can fall back to a lightweight translation-only volume registration for prior studies or cross-modality comparisons when both sides have volumes.
 - Open viewer windows for the same patient can broadcast linked navigation and Shift-based 3D cursor updates across monitors.
+
+### Research workflow notes
+
+- Use the viewport toolbox or the measurement popup action `Suggest RECIST follow-up` after selecting a baseline line or ROI measurement.
+- RECIST suggestions use the selected baseline measurement as the source lesion and the active or toolbox-target viewport as the follow-up target series.
+- Suggested follow-up measurements retain tracking metadata such as label, timepoint, confidence summary, and patient-space lesion center.
+- ROI-based measurements can also feed slice radiomics extraction and research SR export payloads for downstream review or archival.
+
+### ROI workflow notes
+
+- Rectangle, ellipse, and polygon ROIs now expose richer per-slice measurement summaries, including mean, median, standard deviation, percentile bands, min/max, and physical area.
+- Selecting an ROI opens a floating histogram/details panel with draggable positioning, pinning, collapse/expand support, and modality-specific supplemental hints such as CT attenuation language or MR/DWI context.
+- Polygon ROI supports double-click auto-outline when no line has been started; use the ROI panel `Shrink` and `Grow` actions to tune the segmentation sensitivity after creation.
+- The `Modify` tool supports keyboard nudging of the selected measurement with the arrow keys; hold `Shift` for larger steps.
+
+### 3D ROI workflow notes
+
+- Choose `3D ROI` from the viewport toolbox to draft a volumetric ROI across slices; double-click without a line to auto-outline the pointed structure, or double-click with a line already started to close the current contour.
+- The floating 3D ROI panel shows a rotatable mesh preview, estimated volume, and source/interpolated contours; use the arrow keys to rotate the preview and `Enter` / `Esc` to finish or cancel the draft.
+- `Shrink` and `Grow` re-run the latest auto-outline with lower or higher sensitivity while preserving the current preview orientation.
+- `Add` appends another disconnected component into the same 3D ROI draft instead of replacing the existing structure, which is useful for paired anatomy such as left/right ventricles or bilateral lesions.
+- Saved 3D ROI measurements continue to show interpolated contours during slice navigation while keeping source slices visually distinguishable from generated intermediate slices.
 
 ### Viewer interaction notes
 

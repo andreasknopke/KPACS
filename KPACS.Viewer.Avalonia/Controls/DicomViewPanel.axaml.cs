@@ -1781,6 +1781,15 @@ public partial class DicomViewPanel : UserControl
             return;
         }
 
+        if (point.Properties.IsLeftButtonPressed &&
+            e.KeyModifiers.HasFlag(KeyModifiers.Shift) &&
+            TryGetImagePoint(pos, out Point shiftImagePoint))
+        {
+            ImagePointPressed?.Invoke(new DicomImagePointerInfo(shiftImagePoint, e.KeyModifiers));
+            e.Handled = true;
+            return;
+        }
+
         // Double-click left: let the host window decide how to handle layout focus.
         if (point.Properties.IsLeftButtonPressed && e.ClickCount == 2)
         {

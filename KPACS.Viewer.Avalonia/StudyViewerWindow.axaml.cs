@@ -52,6 +52,7 @@ public partial class StudyViewerWindow : Window
     private bool _isActionToolbarPointerOver;
     private bool _isPriorPreviewLoading;
     private bool _isSynchronizingLinkedViews;
+    private bool _is3DCursorToolArmed;
     private ViewportSlot? _linkedReferenceSourceSlot;
     private SeriesVolume? _linkedReferenceSourceVolume;
     private DicomSpatialMetadata? _linkedReferenceSourceMetadata;
@@ -92,6 +93,7 @@ public partial class StudyViewerWindow : Window
         ViewerIdentityText.Text = $"Viewer {viewerNumber}";
         StudyTitleText.Text = context.StudyDetails.Study.PatientName;
         StudySubtitleText.Text = BuildSubtitle();
+        KeyDown += OnWindowKeyDown;
         KeyUp += OnWindowKeyUp;
         Deactivated += (_, _) => Clear3DCursor();
         Opened += OnViewerOpened;
@@ -593,6 +595,30 @@ public partial class StudyViewerWindow : Window
         }
     }
 
+    private void OnViewportToolboxPopupClosed(object? sender, EventArgs e)
+    {
+        UpdateMeasurementToolButtons();
+    }
+
+    private void OnNavigateToolClick(object? sender, RoutedEventArgs e)
+    {
+        SetMeasurementTool(MeasurementTool.None);
+        ViewportToolboxPopup.IsOpen = false;
+        e.Handled = true;
+    }
+
+    private void OnToolboxOverlayToggleClick(object? sender, RoutedEventArgs e)
+    {
+        OverlayToggleButton.IsChecked = ToolboxOverlayToggleButton.IsChecked;
+        OnOverlayToggleClick(sender, e);
+    }
+
+    private void OnToolboxLinkedSyncToggleClick(object? sender, RoutedEventArgs e)
+    {
+        LinkedSyncToggleButton.IsChecked = ToolboxLinkedSyncToggleButton.IsChecked;
+        OnLinkedSyncToggleClick(sender, e);
+    }
+
     private void SetActiveSlot(ViewportSlot? slot, bool requestPriority = true)
     {
         if (ReferenceEquals(_activeSlot, slot))
@@ -617,6 +643,8 @@ public partial class StudyViewerWindow : Window
             ClearLinkedReferenceLines();
         }
 
+        RefreshMeasurementInsightPanel();
+        RefreshVolumeRoiDraftPanel();
         UpdateStatus();
     }
 
@@ -641,6 +669,16 @@ public partial class StudyViewerWindow : Window
         if (ReferenceEquals(slot, _linkedReferenceSourceSlot))
         {
             _linkedReferenceSourceMetadata = slot.CurrentSpatialMetadata;
+        }
+
+        if (ReferenceEquals(slot, _activeSlot) && _selectedMeasurementId is not null)
+        {
+            RefreshMeasurementInsightPanel();
+        }
+
+        if (ReferenceEquals(slot, _activeSlot))
+        {
+            RefreshVolumeRoiDraftPanel();
         }
 
         RefreshLinkedReferenceLines();
@@ -836,7 +874,9 @@ public partial class StudyViewerWindow : Window
     private void ApplyVolumeToSlot(ViewportSlot slot, SeriesVolume volume)
     {
         // Preserve current view state and approximate slice position
-        var viewState = slot.Panel.IsImageLoaded ? slot.Panel.CaptureDisplayState() : null;
+        DicomViewPanel.DisplayState? viewState = slot.Panel.IsImageLoaded
+            ? BuildVolumeTransitionDisplayState(slot.Panel.CaptureDisplayState(), volume)
+            : null;
         int previousIndex = slot.InstanceIndex;
 
         slot.Volume = volume;
@@ -866,6 +906,17 @@ public partial class StudyViewerWindow : Window
         }
 
         UpdateStatus();
+    }
+
+    private static DicomViewPanel.DisplayState BuildVolumeTransitionDisplayState(DicomViewPanel.DisplayState state, SeriesVolume volume)
+    {
+        double defaultThickness = Math.Max(0.1, VolumeReslicer.GetSliceSpacing(volume, SliceOrientation.Axial));
+        return state with
+        {
+            Orientation = SliceOrientation.Axial,
+            ProjectionMode = VolumeProjectionMode.Mpr,
+            ProjectionThicknessMm = defaultThickness,
+        };
     }
 
     private async Task LoadPriorStudiesAsync()
@@ -1816,6 +1867,25 @@ public partial class StudyViewerWindow : Window
 
         SetActiveSlot(sourceSlot, requestPriority: false);
         Apply3DCursor(sourceSlot, info.ImagePoint);
+
+        if (_is3DCursorToolArmed)
+        {
+            _is3DCursorToolArmed = false;
+            Toolbox3DCursorButton.IsChecked = false;
+            UpdateStatus();
+        }
+    }
+
+    private void OnToolbox3DCursorClick(object? sender, RoutedEventArgs e)
+    {
+        _is3DCursorToolArmed = Toolbox3DCursorButton.IsChecked == true;
+        if (!_is3DCursorToolArmed)
+        {
+            Clear3DCursor();
+        }
+
+        UpdateStatus();
+        e.Handled = true;
     }
 
     private static string BuildLinkedSyncSignature(ViewportSlot slot, DicomViewPanel panel)
@@ -2236,6 +2306,77 @@ public partial class StudyViewerWindow : Window
         }
     }
 
+    private void OnWindowKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (_activeSlot?.Panel is { HasVolumeRoiDraft: true } drawingPanel)
+        {
+            if (e.Key == Key.Enter)
+            {
+                if (drawingPanel.TryCompleteVolumeRoiDraft())
+                {
+                    RefreshMeasurementPanels();
+                    ShowToast("3D ROI created.", ToastSeverity.Success, TimeSpan.FromSeconds(4));
+                }
+                else
+                {
+                    ShowToast("Close at least one slice contour with a double-click before finishing the 3D ROI.", ToastSeverity.Warning, TimeSpan.FromSeconds(5));
+                }
+
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Key == Key.Escape)
+            {
+                drawingPanel.CancelVolumeRoiDraft();
+                RefreshVolumeRoiDraftPanel();
+                UpdateStatus();
+                ShowToast("3D ROI draft cancelled.", ToastSeverity.Info, TimeSpan.FromSeconds(3));
+                e.Handled = true;
+                return;
+            }
+
+            if (TryRotateVolumeRoiDraftPreview(e.Key, e.KeyModifiers.HasFlag(KeyModifiers.Shift)))
+            {
+                UpdateStatus();
+                e.Handled = true;
+                return;
+            }
+        }
+
+        if (_measurementTool != MeasurementTool.Modify)
+        {
+            return;
+        }
+
+        if (TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox)
+        {
+            return;
+        }
+
+        double step = e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? 5 : 1;
+        Vector? delta = e.Key switch
+        {
+            Key.Left => new Vector(-step, 0),
+            Key.Right => new Vector(step, 0),
+            Key.Up => new Vector(0, -step),
+            Key.Down => new Vector(0, step),
+            _ => null,
+        };
+
+        if (delta is not Vector nudgeDelta)
+        {
+            return;
+        }
+
+        if (TryNudgeSelectedMeasurement(nudgeDelta))
+        {
+            UpdateStatus();
+        }
+
+        e.Handled = true;
+    }
+
     private void OnWindowKeyUp(object? sender, KeyEventArgs e)
     {
         if (e.Key == Key.LeftShift || e.Key == Key.RightShift)
@@ -2246,20 +2387,31 @@ public partial class StudyViewerWindow : Window
     }
 
     private bool Is3DCursorRequested(KeyModifiers modifiers) =>
-        modifiers.HasFlag(KeyModifiers.Shift);
+        _is3DCursorToolArmed || modifiers.HasFlag(KeyModifiers.Shift);
 
     private string BuildStatusText(ViewportSlot? slot)
     {
         string toolText = $"Action: {GetActionToolbarModeLabel()}";
-        string cursorText = "Hold SHIFT for 3D cursor";
+        string cursorText = _is3DCursorToolArmed
+            ? "3D cursor: click a viewport"
+            : "Hold SHIFT for 3D cursor";
         string measurementText = $"Measure: {GetMeasurementToolLabel()}";
+        string nudgeText = _measurementTool == MeasurementTool.Modify
+            ? "   Nudge: arrows move selected measurement (SHIFT = 5 px)"
+            : string.Empty;
+        string volumeRoiText = _measurementTool == MeasurementTool.VolumeRoi || _activeSlot?.Panel is { HasVolumeRoiDraft: true }
+            ? "   3D ROI: double-click without a line auto-outlines a 3D lesion, double-click with a line closes contour, use Add to merge another region, preview buttons grow/shrink, arrows rotate mesh (SHIFT = faster), scroll slices, Enter finishes, Esc cancels"
+            : string.Empty;
+        string polygonAutoOutlineText = _measurementTool == MeasurementTool.PolygonRoi
+            ? "   Polygon ROI: double-click without a line auto-outlines the pointed structure"
+            : string.Empty;
         string linkedText = _linkedViewSyncEnabled && slot?.CurrentSpatialMetadata is not null
             ? $"Linked: {GetLinkedViewCount(slot)}"
             : "Linked: off";
 
         if (slot?.Series is null)
         {
-            return $"{toolText}   {measurementText}   {linkedText}   {cursorText}";
+            return $"{toolText}   {measurementText}{nudgeText}{polygonAutoOutlineText}{volumeRoiText}   {linkedText}   {cursorText}";
         }
 
         int total = GetSeriesTotalCount(slot.Series);
@@ -2278,7 +2430,7 @@ public partial class StudyViewerWindow : Window
             ? $"   {slot.Panel.OrientationLabel}   {slot.Panel.ProjectionModeLabel} {slot.Panel.ProjectionThicknessMm:F1} mm"
             : string.Empty;
 
-        return $"{slot.Series.Modality}   Series {slot.Series.SeriesNumber}   Image {slot.InstanceIndex + 1}/{total}{projectionText}   {toolText}   {measurementText}{retrievalText}   {linkedText}   {cursorText}";
+        return $"{slot.Series.Modality}   Series {slot.Series.SeriesNumber}   Image {slot.InstanceIndex + 1}/{total}{projectionText}   {toolText}   {measurementText}{nudgeText}{polygonAutoOutlineText}{volumeRoiText}{retrievalText}   {linkedText}   {cursorText}";
     }
 
     private int GetLinkedViewCount(ViewportSlot sourceSlot)
@@ -2893,6 +3045,10 @@ public partial class StudyViewerWindow : Window
             if (settings is not null)
             {
                 _linkedViewSyncEnabled = settings.LinkedViewSyncEnabled;
+                _measurementInsightPinned = settings.MeasurementInsightPinned;
+                _measurementInsightCollapsed = settings.MeasurementInsightCollapsed;
+                _measurementInsightOffset = new Point(settings.MeasurementInsightOffsetX, settings.MeasurementInsightOffsetY);
+                _volumeRoiPreviewPinned = settings.VolumeRoiPreviewPinned;
                 _savedCustomLayouts = settings.SavedCustomLayouts?
                     .Where(layout => TryParseLayoutSpec(layout, out _))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -2926,6 +3082,11 @@ public partial class StudyViewerWindow : Window
             StudyViewerSettings settings = new()
             {
                 LinkedViewSyncEnabled = _linkedViewSyncEnabled,
+                MeasurementInsightPinned = _measurementInsightPinned,
+                MeasurementInsightCollapsed = _measurementInsightCollapsed,
+                MeasurementInsightOffsetX = _measurementInsightOffset.X,
+                MeasurementInsightOffsetY = _measurementInsightOffset.Y,
+                VolumeRoiPreviewPinned = _volumeRoiPreviewPinned,
                 SavedCustomLayouts = [.. _savedCustomLayouts],
                 LastLayoutSpec = LayoutSpecToString(_currentLayoutSpec),
             };
@@ -3045,6 +3206,11 @@ public partial class StudyViewerWindow : Window
     private sealed class StudyViewerSettings
     {
         public bool LinkedViewSyncEnabled { get; init; } = true;
+        public bool MeasurementInsightPinned { get; init; }
+        public bool MeasurementInsightCollapsed { get; init; }
+        public double MeasurementInsightOffsetX { get; init; }
+        public double MeasurementInsightOffsetY { get; init; }
+        public bool VolumeRoiPreviewPinned { get; init; }
         public List<string>? SavedCustomLayouts { get; init; }
         public string? LastLayoutSpec { get; init; }
     }

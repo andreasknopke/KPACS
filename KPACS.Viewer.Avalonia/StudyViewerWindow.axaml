@@ -155,6 +155,304 @@
                        Width="0"
                        Height="0" />
 
+                <Border x:Name="MeasurementInsightPanel"
+                    IsVisible="False"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Bottom"
+                    Margin="0,0,18,18"
+                    Padding="12"
+                    MaxWidth="360"
+                    MinWidth="280"
+                    Background="#E6141820"
+                    BorderBrush="#805E7FA4"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    ZIndex="4">
+                <Border.RenderTransform>
+                    <TranslateTransform />
+                </Border.RenderTransform>
+                <StackPanel Spacing="8">
+                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                        <StackPanel x:Name="MeasurementInsightDragHandle"
+                                    Spacing="2"
+                                    Cursor="SizeAll"
+                                    PointerPressed="OnMeasurementInsightHeaderPointerPressed"
+                                    PointerMoved="OnMeasurementInsightHeaderPointerMoved"
+                                    PointerReleased="OnMeasurementInsightHeaderPointerReleased">
+                            <TextBlock x:Name="MeasurementInsightTitleText"
+                                       Foreground="#FFF6FBFF"
+                                       FontWeight="SemiBold"
+                                       FontSize="13" />
+                            <TextBlock x:Name="MeasurementInsightSeriesText"
+                                       Foreground="#FF9DB3C7"
+                                       FontSize="11"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                        <ToggleButton x:Name="MeasurementInsightPinButton"
+                                      Grid.Column="1"
+                                      Classes="iconToggle"
+                                      Width="30"
+                                      Height="30"
+                                      MinWidth="30"
+                                      Click="OnMeasurementInsightPinClick"
+                                      ToolTip.Tip="Pin the ROI panel and retain the last measurement details." />
+                        <ToggleButton x:Name="MeasurementInsightCollapseButton"
+                                      Grid.Column="2"
+                                      Classes="iconToggle"
+                                      Width="30"
+                                      Height="30"
+                                      MinWidth="30"
+                                      Click="OnMeasurementInsightCollapseClick"
+                                      ToolTip.Tip="Collapse or expand the ROI histogram section." />
+                    </Grid>
+
+                    <Border Height="1" Background="#334D5F74" />
+
+                    <StackPanel x:Name="MeasurementInsightBodyPanel"
+                                Spacing="8">
+                    <StackPanel Spacing="3">
+                        <TextBlock x:Name="MeasurementInsightStatsText"
+                                   Foreground="#FFF1F6AA"
+                                   FontSize="11"
+                                   TextWrapping="Wrap" />
+                        <TextBlock x:Name="MeasurementInsightRangeText"
+                                   Foreground="#FFAEC2D3"
+                                   FontSize="10"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+
+                        <Grid x:Name="MeasurementInsightCorrectionRow"
+                          IsVisible="False"
+                          ColumnDefinitions="Auto,Auto,*"
+                          ColumnSpacing="8">
+                        <Button x:Name="MeasurementInsightShrinkButton"
+                            Content="Shrink"
+                            MinWidth="68"
+                            Click="OnMeasurementInsightShrinkClick"
+                            ToolTip.Tip="Reduce polygon auto-outline sensitivity to shrink the selected ROI." />
+                        <Button x:Name="MeasurementInsightGrowButton"
+                            Grid.Column="1"
+                            Content="Grow"
+                            MinWidth="68"
+                            Click="OnMeasurementInsightGrowClick"
+                            ToolTip.Tip="Increase polygon auto-outline sensitivity to grow the selected ROI." />
+                        <TextBlock x:Name="MeasurementInsightCorrectionText"
+                               Grid.Column="2"
+                               VerticalAlignment="Center"
+                               Foreground="#FFD3E5F5"
+                               FontSize="10"
+                               TextWrapping="Wrap"
+                               Text="Sensitivity: default" />
+                        </Grid>
+
+                    <Border Background="#20000000"
+                            BorderBrush="#33394B61"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="8,6">
+                        <Grid RowDefinitions="*,Auto" RowSpacing="4">
+                            <Canvas x:Name="MeasurementInsightHistogramCanvas"
+                                    Width="320"
+                                    Height="120" />
+                            <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                <TextBlock x:Name="MeasurementInsightAxisMinText"
+                                           Foreground="#FF9DB3C7"
+                                           FontSize="10" />
+                                <StackPanel Grid.Column="1"
+                                            Orientation="Horizontal"
+                                            HorizontalAlignment="Center"
+                                            Spacing="10">
+                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                        <Border Width="10" Height="10" CornerRadius="5" Background="#FF7FDFA2" />
+                                        <TextBlock Text="P10" Foreground="#FFD3E5F5" FontSize="10" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                        <Border Width="10" Height="10" CornerRadius="5" Background="#FFFFD86B" />
+                                        <TextBlock Text="Median" Foreground="#FFD3E5F5" FontSize="10" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                        <Border Width="10" Height="10" CornerRadius="5" Background="#FFFF8A8A" />
+                                        <TextBlock Text="P90" Foreground="#FFD3E5F5" FontSize="10" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                        <Border Width="16" Height="2" VerticalAlignment="Center" Background="#CCFFD56B" />
+                                        <TextBlock Text="Trend" Foreground="#FFD3E5F5" FontSize="10" />
+                                    </StackPanel>
+                                </StackPanel>
+                                <TextBlock x:Name="MeasurementInsightAxisMaxText"
+                                           Grid.Column="2"
+                                           Foreground="#FF9DB3C7"
+                                           FontSize="10"
+                                           HorizontalAlignment="Right" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <TextBlock x:Name="MeasurementInsightSupplementText"
+                               Foreground="#FFD3E5F5"
+                               FontSize="10"
+                               TextWrapping="Wrap" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <Border x:Name="VolumeRoiDraftPanel"
+                    IsVisible="False"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Bottom"
+                    Margin="18,0,0,18"
+                    Padding="12"
+                    MaxWidth="360"
+                    MinWidth="280"
+                    Background="#E6141820"
+                    BorderBrush="#806D9ED6"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    ZIndex="4">
+                <StackPanel Spacing="8">
+                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                        <TextBlock x:Name="VolumeRoiDraftTitleText"
+                                   Text="3D ROI draft"
+                                   Foreground="#FFF6FBFF"
+                                   FontWeight="SemiBold"
+                                   FontSize="13"
+                                   VerticalAlignment="Center" />
+                        <ToggleButton x:Name="VolumeRoiAddButton"
+                                      Grid.Column="1"
+                                      Content="Add"
+                                      Width="40"
+                                      Height="26"
+                                      MinWidth="40"
+                                      Click="OnVolumeRoiAddClick"
+                                      ToolTip.Tip="Add another region to the 3D ROI draft instead of replacing the current slice contour." />
+                        <ToggleButton x:Name="VolumeRoiDraftPinButton"
+                                      Grid.Column="2"
+                                      Classes="iconToggle"
+                                      Width="30"
+                                      Height="30"
+                                      MinWidth="30"
+                                      Click="OnVolumeRoiPreviewPinClick"
+                                      ToolTip.Tip="Pin the 3D ROI model panel and retain the last preview." />
+                    </Grid>
+                    <TextBlock x:Name="VolumeRoiDraftStatusText"
+                               Foreground="#FF9DB3C7"
+                               FontSize="11"
+                               TextWrapping="Wrap" />
+                        <Grid x:Name="VolumeRoiDraftCorrectionRow"
+                          IsVisible="False"
+                          ColumnDefinitions="Auto,Auto,*"
+                          ColumnSpacing="8">
+                        <Button x:Name="VolumeRoiShrinkButton"
+                            Content="Shrink"
+                            MinWidth="68"
+                            Click="OnVolumeRoiShrinkClick"
+                            ToolTip.Tip="Reduce auto-outline sensitivity to shrink the 3D ROI draft." />
+                        <Button x:Name="VolumeRoiGrowButton"
+                            Grid.Column="1"
+                            Content="Grow"
+                            MinWidth="68"
+                            Click="OnVolumeRoiGrowClick"
+                            ToolTip.Tip="Increase auto-outline sensitivity to grow the 3D ROI draft." />
+                        <TextBlock x:Name="VolumeRoiCorrectionText"
+                               Grid.Column="2"
+                               VerticalAlignment="Center"
+                               Foreground="#FFD3E5F5"
+                               FontSize="10"
+                               TextWrapping="Wrap"
+                               Text="Sensitivity: default" />
+                        </Grid>
+                    <Border Height="1" Background="#334D5F74" />
+                    <Border Background="#20000000"
+                            BorderBrush="#33394B61"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="8,6">
+                        <Canvas x:Name="VolumeRoiDraftCanvas"
+                                Width="320"
+                                Height="160" />
+                    </Border>
+                    <TextBlock x:Name="VolumeRoiDraftHintText"
+                               Foreground="#FFD3E5F5"
+                               FontSize="10"
+                               TextWrapping="Wrap"
+                               Text="Click to place points, double-click without a line to auto-outline, or double-click with a line to close a slice contour. Scroll to another slice, use arrow keys to rotate the mesh preview, then press Enter to finish or Esc to cancel." />
+                </StackPanel>
+            </Border>
+
+            <Popup x:Name="ViewportToolboxPopup"
+                   Placement="Bottom"
+                   HorizontalOffset="0"
+                   VerticalOffset="8"
+                   IsLightDismissEnabled="True"
+                   Closed="OnViewportToolboxPopupClosed">
+                <Border Background="#E61B2028"
+                        BorderBrush="#667AA6D9"
+                        BorderThickness="1"
+                        CornerRadius="16"
+                        Padding="14,12"
+                        MaxWidth="520"
+                        BoxShadow="0 14 36 0 #70000000">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Viewport toolbox"
+                                   Foreground="#FFF2F4F8"
+                                   FontWeight="SemiBold"
+                                   FontSize="13" />
+
+                        <WrapPanel ItemWidth="50" Orientation="Horizontal">
+                            <ToggleButton x:Name="ToolboxNavigateButton" Classes="toolboxChip" Content="Navigate" Click="OnNavigateToolClick" />
+                            <ToggleButton x:Name="ToolboxPixelLensButton" Classes="toolboxChip" Content="Pixel lens" Tag="PixelLens" Click="OnMeasurementToolPopupClick" />
+                            <ToggleButton x:Name="ToolboxLineButton" Classes="toolboxChip" Content="Line" Tag="Line" Click="OnMeasurementToolPopupClick" />
+                            <ToggleButton x:Name="ToolboxAngleButton" Classes="toolboxChip" Content="Angle" Tag="Angle" Click="OnMeasurementToolPopupClick" />
+                            <ToggleButton x:Name="ToolboxAnnotationButton" Classes="toolboxChip" Content="Text" Tag="Annotation" Click="OnMeasurementToolPopupClick" />
+                            <ToggleButton x:Name="ToolboxRectangleRoiButton" Classes="toolboxChip" Content="Rect ROI" Tag="RectangleRoi" Click="OnMeasurementToolPopupClick" />
+                            <ToggleButton x:Name="ToolboxEllipseRoiButton" Classes="toolboxChip" Content="Ellipse ROI" Tag="EllipseRoi" Click="OnMeasurementToolPopupClick" />
+                            <ToggleButton x:Name="ToolboxPolygonRoiButton" Classes="toolboxChip" Content="Polygon ROI" Tag="PolygonRoi" Click="OnMeasurementToolPopupClick" />
+                            <ToggleButton x:Name="ToolboxVolumeRoiButton" Classes="toolboxChip" Content="3D ROI" Tag="VolumeRoi" Click="OnMeasurementToolPopupClick" ToolTip.Tip="Draw a volumetric ROI across slices. Double-click without a line auto-outlines the structure, double-click with a line closes the contour, use Add in the preview panel to merge another region, and Enter finishes the 3D ROI." />
+                            <ToggleButton x:Name="ToolboxModifyButton" Classes="toolboxChip" Content="Modify" Tag="Modify" Click="OnMeasurementToolPopupClick" ToolTip.Tip="Select and edit measurements. Arrow keys nudge the selected measurement; hold SHIFT for larger steps." />
+                            <ToggleButton x:Name="ToolboxEraseButton" Classes="toolboxChip" Content="Erase" Tag="Erase" Click="OnMeasurementToolPopupClick" />
+                        </WrapPanel>
+
+                        <Border Height="1" Background="#334D5F74" />
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Research"
+                                       Foreground="#FFB9C4D1"
+                                       FontSize="11"
+                                       FontWeight="SemiBold" />
+                            <Button x:Name="ToolboxRecistSuggestButton"
+                                    Classes="popupAction"
+                                    Content="Suggest RECIST follow-up"
+                                    Click="OnToolboxRecistSuggestClick"
+                                    ToolTip.Tip="Use the selected baseline line or ROI and create a suggested follow-up lesion in this viewport's loaded series." />
+                        </StackPanel>
+
+                        <Border Height="1" Background="#334D5F74" />
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="View"
+                                       Foreground="#FFB9C4D1"
+                                       FontSize="11"
+                                       FontWeight="SemiBold" />
+                            <WrapPanel ItemWidth="56" Orientation="Horizontal">
+                                <ToggleButton x:Name="ToolboxOverlayToggleButton" Classes="toolboxChip" Content="Overlay" Click="OnToolboxOverlayToggleClick" />
+                            </WrapPanel>
+                        </StackPanel>
+
+                        <Border Height="1" Background="#334D5F74" />
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Linking"
+                                       Foreground="#FFB9C4D1"
+                                       FontSize="11"
+                                       FontWeight="SemiBold" />
+                            <WrapPanel ItemWidth="56" Orientation="Horizontal">
+                                <ToggleButton x:Name="Toolbox3DCursorButton" Classes="toolboxChip" Click="OnToolbox3DCursorClick" />
+                                <ToggleButton x:Name="ToolboxLinkedSyncToggleButton" Classes="toolboxChip" Content="Linked sync" Click="OnToolboxLinkedSyncToggleClick" />
+                            </WrapPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Popup>
             <ItemsControl x:Name="ToastItemsControl"
                           HorizontalAlignment="Right"
                           VerticalAlignment="Top"
@@ -230,7 +528,9 @@
                         <Button Classes="popupAction" Content="Angle" Tag="Angle" Click="OnMeasurementToolPopupClick" />
                         <Button Classes="popupAction" Content="Annotation" Tag="Annotation" Click="OnMeasurementToolPopupClick" />
                         <Button Classes="popupAction" Content="Rectangle ROI" Tag="RectangleRoi" Click="OnMeasurementToolPopupClick" />
+                        <Button Classes="popupAction" Content="Ellipse ROI" Tag="EllipseRoi" Click="OnMeasurementToolPopupClick" />
                         <Button Classes="popupAction" Content="Polygon ROI" Tag="PolygonRoi" Click="OnMeasurementToolPopupClick" />
+                        <Button Classes="popupAction" Content="3D ROI" Tag="VolumeRoi" Click="OnMeasurementToolPopupClick" />
                         <Button Classes="popupAction" Content="Pixel lens" Tag="PixelLens" Click="OnMeasurementToolPopupClick" />
                         <Button Classes="popupAction" Content="Modify" Tag="Modify" Click="OnMeasurementToolPopupClick" />
                         <Button Classes="popupAction" Content="Erase" Tag="Erase" Click="OnMeasurementToolPopupClick" />

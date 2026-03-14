@@ -51,7 +51,9 @@ public enum MeasurementTool
     Angle,
     Annotation,
     RectangleRoi,
+    EllipseRoi,
     PolygonRoi,
+    VolumeRoi,
     Modify,
     Erase,
 }

@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using KPACS.Viewer.Controls;
@@ -9,8 +10,10 @@ namespace KPACS.Viewer;
 public partial class StudyViewerWindow
 {
     private readonly List<StudyMeasurement> _studyMeasurements = [];
+    private readonly Dictionary<Guid, PolygonAutoOutlineState> _polygonAutoOutlineStates = [];
     private MeasurementTool _measurementTool = MeasurementTool.None;
     private Guid? _selectedMeasurementId;
+    private bool _isApplyingPolygonAutoOutlineCorrection;
 
     private MeasurementTool GetEffectiveMeasurementTool() =>
         _actionToolbarMode == ActionToolbarMode.Tools ? _measurementTool : MeasurementTool.None;
@@ -24,17 +27,24 @@ public partial class StudyViewerWindow
     private void ConfigureMeasurementPanel(ViewportSlot slot, DicomViewPanel panel)
     {
         panel.SetMeasurementTool(GetEffectiveMeasurementTool());
+        panel.SetMeasurementNudgeMode(false);
         panel.SetMeasurements(_studyMeasurements, _selectedMeasurementId);
+        panel.SetMeasurementTextSupplementProvider(GetMeasurementTextSupplement);
         panel.MeasurementCreated += OnPanelMeasurementCreated;
         panel.MeasurementUpdated += OnPanelMeasurementUpdated;
         panel.MeasurementDeleted += OnPanelMeasurementDeleted;
         panel.SelectedMeasurementChanged += OnPanelMeasurementSelectedChanged;
+        panel.AutoOutlinedMeasurementCreated += OnPanelAutoOutlinedMeasurementCreated;
+        panel.VolumeRoiDraftChanged += _ => RefreshVolumeRoiDraftPanel();
     }
 
     private void ApplyMeasurementContext(ViewportSlot slot)
     {
         slot.Panel.SetMeasurementTool(GetEffectiveMeasurementTool());
+        slot.Panel.SetMeasurementNudgeMode(false);
         slot.Panel.SetMeasurements(_studyMeasurements, _selectedMeasurementId);
+        RefreshMeasurementInsightPanel();
+        RefreshVolumeRoiDraftPanel();
     }
 
     private void RefreshMeasurementPanels()
@@ -43,9 +53,12 @@ public partial class StudyViewerWindow
         foreach (ViewportSlot slot in _slots)
         {
             slot.Panel.SetMeasurementTool(effectiveTool);
+            slot.Panel.SetMeasurementNudgeMode(false);
             slot.Panel.SetMeasurements(_studyMeasurements, _selectedMeasurementId);
         }
 
+        RefreshMeasurementInsightPanel();
+        RefreshVolumeRoiDraftPanel();
         UpdateStatus();
     }
 
@@ -80,6 +93,35 @@ public partial class StudyViewerWindow
         {
             return;
         }
+
+        ToolboxNavigateButton.IsChecked = _measurementTool == MeasurementTool.None;
+        ToolboxPixelLensButton.IsChecked = _measurementTool == MeasurementTool.PixelLens;
+        ToolboxLineButton.IsChecked = _measurementTool == MeasurementTool.Line;
+        ToolboxAngleButton.IsChecked = _measurementTool == MeasurementTool.Angle;
+        ToolboxAnnotationButton.IsChecked = _measurementTool == MeasurementTool.Annotation;
+        ToolboxRectangleRoiButton.IsChecked = _measurementTool == MeasurementTool.RectangleRoi;
+        ToolboxEllipseRoiButton.IsChecked = _measurementTool == MeasurementTool.EllipseRoi;
+        ToolboxPolygonRoiButton.IsChecked = _measurementTool == MeasurementTool.PolygonRoi;
+        ToolboxVolumeRoiButton.IsChecked = _measurementTool == MeasurementTool.VolumeRoi;
+        ToolboxModifyButton.IsChecked = _measurementTool == MeasurementTool.Modify;
+        ToolboxEraseButton.IsChecked = _measurementTool == MeasurementTool.Erase;
+    }
+
+    private bool TryNudgeSelectedMeasurement(Avalonia.Vector delta)
+    {
+        IEnumerable<ViewportSlot> candidateSlots = _slots
+            .Where(slot => slot.Panel.IsImageLoaded)
+            .OrderByDescending(slot => ReferenceEquals(slot, _activeSlot));
+
+        foreach (ViewportSlot slot in candidateSlots)
+        {
+            if (slot.Panel.TryNudgeSelectedMeasurement(delta))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async void OnPanelMeasurementCreated(StudyMeasurement measurement)
@@ -87,6 +129,7 @@ public partial class StudyViewerWindow
         _studyMeasurements.RemoveAll(existing => existing.Id == measurement.Id);
         _studyMeasurements.Add(measurement);
         _selectedMeasurementId = measurement.Id;
+        QueueMeasurementInsightRefresh(measurement.Id);
         RefreshMeasurementPanels();
 
         if (measurement.Kind != MeasurementKind.Annotation)
@@ -113,6 +156,11 @@ public partial class StudyViewerWindow
 
     private void OnPanelMeasurementUpdated(StudyMeasurement measurement)
     {
+        if (!_isApplyingPolygonAutoOutlineCorrection && measurement.Kind == MeasurementKind.PolygonRoi)
+        {
+            _polygonAutoOutlineStates.Remove(measurement.Id);
+        }
+
         int index = _studyMeasurements.FindIndex(existing => existing.Id == measurement.Id);
         if (index >= 0)
         {
@@ -124,6 +172,7 @@ public partial class StudyViewerWindow
         }
 
         _selectedMeasurementId = measurement.Id;
+        QueueMeasurementInsightRefresh(measurement.Id);
         RefreshMeasurementPanels();
     }
 
@@ -135,12 +184,15 @@ public partial class StudyViewerWindow
         }
 
         _selectedMeasurementId = measurementId;
+        QueueMeasurementInsightRefresh(measurementId);
         RefreshMeasurementPanels();
     }
 
     private void OnPanelMeasurementDeleted(Guid measurementId)
     {
         _studyMeasurements.RemoveAll(existing => existing.Id == measurementId);
+        _polygonAutoOutlineStates.Remove(measurementId);
+        RemoveMeasurementInsight(measurementId);
         if (_selectedMeasurementId == measurementId)
         {
             _selectedMeasurementId = null;
@@ -148,6 +200,19 @@ public partial class StudyViewerWindow
 
         RefreshMeasurementPanels();
     }
+
+    private void OnPanelAutoOutlinedMeasurementCreated(DicomViewPanel.AutoOutlinedMeasurementInfo info)
+    {
+        if (info.Kind != MeasurementKind.PolygonRoi)
+        {
+            return;
+        }
+
+        _polygonAutoOutlineStates[info.MeasurementId] = new PolygonAutoOutlineState(info.SeedPoint, info.SensitivityLevel);
+        RefreshMeasurementInsightPanel();
+    }
+
+    private sealed record PolygonAutoOutlineState(Point SeedPoint, int SensitivityLevel);
 
     private string GetMeasurementToolLabel() => _measurementTool switch
     {
@@ -157,7 +222,9 @@ public partial class StudyViewerWindow
         MeasurementTool.Angle => "Angle",
         MeasurementTool.Annotation => "Annotation",
         MeasurementTool.RectangleRoi => "Rectangle ROI",
+        MeasurementTool.EllipseRoi => "Ellipse ROI",
         MeasurementTool.PolygonRoi => "Polygon ROI",
+        MeasurementTool.VolumeRoi => "3D ROI",
         MeasurementTool.Modify => "Modify",
         MeasurementTool.Erase => "Erase",
         _ => "Navigate",
