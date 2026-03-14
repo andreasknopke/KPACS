@@ -2145,6 +2145,16 @@ public partial class DicomViewPanel : UserControl
 
     private void OnPointerWheelChanged(object? sender, PointerWheelEventArgs e)
     {
+        if (_measurementTool == MeasurementTool.BallRoiCorrection && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            if (TryAdjustBallRoiRadius(e.Delta.Y > 0 ? 1 : -1, out _))
+            {
+                e.Handled = true;
+            }
+
+            return;
+        }
+
         if (WheelMode == MouseWheelMode.StackScroll)
         {
             StackScrollRequested?.Invoke(e.Delta.Y > 0 ? -1 : 1);

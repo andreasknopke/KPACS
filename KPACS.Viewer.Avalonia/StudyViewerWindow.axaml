@@ -578,6 +578,7 @@
                             <ToggleButton x:Name="ToolboxEllipseRoiButton" Classes="toolboxChip" Content="Ellipse ROI" Tag="EllipseRoi" Click="OnMeasurementToolPopupClick" />
                             <ToggleButton x:Name="ToolboxPolygonRoiButton" Classes="toolboxChip" Content="Polygon ROI" Tag="PolygonRoi" Click="OnMeasurementToolPopupClick" />
                             <ToggleButton x:Name="ToolboxVolumeRoiButton" Classes="toolboxChip" Content="3D ROI" Tag="VolumeRoi" Click="OnMeasurementToolPopupClick" ToolTip.Tip="Draw a volumetric ROI across slices. Double-click without a line auto-outlines the structure, double-click with a line closes the contour, use Add in the preview panel to merge another region, and Enter finishes the 3D ROI." />
+                            <ToggleButton x:Name="ToolboxBallRoiButton" Classes="toolboxChip" Content="ROI ball" Tag="BallRoiCorrection" Click="OnMeasurementToolPopupClick" ToolTip.Tip="Sculpt polygon or 3D ROI edges with a circular brush. Drag from inside for dents, from outside for bulges. Use CTRL+wheel or [ and ] to change the radius." />
                             <ToggleButton x:Name="ToolboxModifyButton" Classes="toolboxChip" Content="Modify" Tag="Modify" Click="OnMeasurementToolPopupClick" ToolTip.Tip="Select and edit measurements. Arrow keys nudge the selected measurement; hold SHIFT for larger steps." />
                             <ToggleButton x:Name="ToolboxEraseButton" Classes="toolboxChip" Content="Erase" Tag="Erase" Click="OnMeasurementToolPopupClick" />
                         </WrapPanel>
@@ -701,6 +702,7 @@
                         <Button Classes="popupAction" Content="Ellipse ROI" Tag="EllipseRoi" Click="OnMeasurementToolPopupClick" />
                         <Button Classes="popupAction" Content="Polygon ROI" Tag="PolygonRoi" Click="OnMeasurementToolPopupClick" />
                         <Button Classes="popupAction" Content="3D ROI" Tag="VolumeRoi" Click="OnMeasurementToolPopupClick" />
+                        <Button Classes="popupAction" Content="ROI ball" Tag="BallRoiCorrection" Click="OnMeasurementToolPopupClick" />
                         <Button Classes="popupAction" Content="Pixel lens" Tag="PixelLens" Click="OnMeasurementToolPopupClick" />
                         <Button Classes="popupAction" Content="Modify" Tag="Modify" Click="OnMeasurementToolPopupClick" />
                         <Button Classes="popupAction" Content="Erase" Tag="Erase" Click="OnMeasurementToolPopupClick" />

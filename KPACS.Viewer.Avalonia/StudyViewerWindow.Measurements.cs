@@ -109,6 +109,7 @@ public partial class StudyViewerWindow
         ToolboxEllipseRoiButton.IsChecked = _measurementTool == MeasurementTool.EllipseRoi;
         ToolboxPolygonRoiButton.IsChecked = _measurementTool == MeasurementTool.PolygonRoi;
         ToolboxVolumeRoiButton.IsChecked = _measurementTool == MeasurementTool.VolumeRoi;
+        ToolboxBallRoiButton.IsChecked = _measurementTool == MeasurementTool.BallRoiCorrection;
         ToolboxModifyButton.IsChecked = _measurementTool == MeasurementTool.Modify;
         ToolboxEraseButton.IsChecked = _measurementTool == MeasurementTool.Erase;
     }
@@ -231,6 +232,7 @@ public partial class StudyViewerWindow
         MeasurementTool.EllipseRoi => "Ellipse ROI",
         MeasurementTool.PolygonRoi => "Polygon ROI",
         MeasurementTool.VolumeRoi => "3D ROI",
+        MeasurementTool.BallRoiCorrection => "ROI ball",
         MeasurementTool.Modify => "Modify",
         MeasurementTool.Erase => "Erase",
         _ => "Navigate",

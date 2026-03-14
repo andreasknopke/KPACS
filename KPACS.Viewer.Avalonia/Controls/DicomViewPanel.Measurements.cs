@@ -79,6 +79,7 @@ public partial class DicomViewPanel
     {
         _measurementDraft = null;
         _measurementEditSession = null;
+        ClearBallRoiInteraction();
         ClearVolumeRoiDraft();
         PixelLensPanel.IsVisible = false;
         _capturedPointer?.Capture(null);
@@ -120,6 +121,7 @@ public partial class DicomViewPanel
     {
         _measurementDraft = null;
         _measurementEditSession = null;
+        ClearBallRoiInteraction();
         PixelLensPanel.IsVisible = false;
         _capturedPointer?.Capture(null);
         _capturedPointer = null;
@@ -199,6 +201,13 @@ public partial class DicomViewPanel
             return true;
         }
 
+        if (_measurementTool == MeasurementTool.BallRoiCorrection)
+        {
+            TryStartBallRoiCorrectionSession(imagePoint, e.Pointer);
+            e.Handled = true;
+            return true;
+        }
+
         if (TryBeginMeasurementEdit(controlPoint, e.Pointer))
         {
             e.Handled = true;
@@ -270,13 +279,37 @@ public partial class DicomViewPanel
             return true;
         }
 
+        if (_measurementTool == MeasurementTool.BallRoiCorrection)
+        {
+            if (TryGetImagePoint(controlPoint, out Point imagePoint))
+            {
+                UpdateBallRoiHoverPoint(imagePoint);
+                if (e.GetCurrentPoint(RootGrid).Properties.IsLeftButtonPressed)
+                {
+                    TryContinueBallRoiCorrectionSession(imagePoint);
+                }
+                else
+                {
+                    UpdateMeasurementPresentation();
+                }
+            }
+            else
+            {
+                UpdateBallRoiHoverPoint(null);
+                UpdateMeasurementPresentation();
+            }
+
+            e.Handled = true;
+            return true;
+        }
+
         if (HandleVolumeRoiPointerMoved(controlPoint))
         {
             e.Handled = true;
             return true;
         }
 
-        return _measurementTool is not MeasurementTool.None and not MeasurementTool.Erase;
+        return _measurementTool is not MeasurementTool.None and not MeasurementTool.Erase and not MeasurementTool.BallRoiCorrection;
     }
 
     private bool HandleMeasurementPointerReleased(PointerReleasedEventArgs e)
@@ -284,6 +317,17 @@ public partial class DicomViewPanel
         if (e.InitialPressMouseButton != MouseButton.Left || _measurementTool == MeasurementTool.None)
         {
             return false;
+        }
+
+        if (_measurementTool == MeasurementTool.BallRoiCorrection)
+        {
+            ClearBallRoiInteraction(clearHover: false);
+            _capturedPointer?.Capture(null);
+            _capturedPointer = null;
+            DetachCapturedPointerHandlers();
+            UpdateMeasurementPresentation();
+            e.Handled = true;
+            return true;
         }
 
         if (_measurementEditSession is not null)
@@ -306,7 +350,7 @@ public partial class DicomViewPanel
             return true;
         }
 
-        return _measurementTool is not MeasurementTool.None and not MeasurementTool.Erase;
+        return _measurementTool is not MeasurementTool.None and not MeasurementTool.Erase and not MeasurementTool.BallRoiCorrection;
     }
 
     private void HandleMeasurementPointerExited()
@@ -314,6 +358,12 @@ public partial class DicomViewPanel
         if (_measurementTool == MeasurementTool.PixelLens)
         {
             PixelLensPanel.IsVisible = false;
+        }
+
+        if (_measurementTool == MeasurementTool.BallRoiCorrection && _roiBallDragSession is null)
+        {
+            UpdateBallRoiHoverPoint(null);
+            UpdateMeasurementPresentation();
         }
 
         UpdateInteractiveCursor();
@@ -654,6 +704,7 @@ public partial class DicomViewPanel
 
         DrawMeasurementDraft();
         DrawVolumeRoiDraftOverlay();
+        DrawBallRoiBrushOverlay();
     }
 
     private List<RenderedMeasurement> GetRenderedMeasurements()
@@ -937,6 +988,54 @@ public partial class DicomViewPanel
         Canvas.SetLeft(ellipse, point.X - radius);
         Canvas.SetTop(ellipse, point.Y - radius);
         MeasurementOverlay.Children.Add(ellipse);
+    }
+
+    private void DrawBallRoiBrushOverlay()
+    {
+        if (_measurementTool != MeasurementTool.BallRoiCorrection || _roiBallHoverImagePoint is not Point imagePoint)
+        {
+            return;
+        }
+
+        Point center = ImageToControlPoint(imagePoint);
+        double radius = GetBallRoiBrushControlRadius(imagePoint);
+        Color strokeColor = Color.Parse("#B0D3E5F5");
+        Color fillColor = Color.Parse("#18D3E5F5");
+        if (TryGetBallRoiBrushPreview(imagePoint, _roiBallDragSession?.AddRegion, out BallRoiBrushPreview preview) && preview.EdgeCollision)
+        {
+            strokeColor = preview.AddRegion ? Color.Parse("#FF7FEA9A") : Color.Parse("#FFFFB06B");
+            fillColor = preview.AddRegion ? Color.Parse("#187FEA9A") : Color.Parse("#18FFB06B");
+        }
+
+        var ellipse = new Ellipse
+        {
+            Width = radius * 2,
+            Height = radius * 2,
+            Stroke = new SolidColorBrush(strokeColor),
+            Fill = new SolidColorBrush(fillColor),
+            StrokeThickness = 1.5,
+            IsHitTestVisible = false,
+        };
+
+        Canvas.SetLeft(ellipse, center.X - radius);
+        Canvas.SetTop(ellipse, center.Y - radius);
+        MeasurementOverlay.Children.Add(ellipse);
+    }
+
+    private double GetBallRoiBrushControlRadius(Point imagePoint)
+    {
+        Point center = ImageToControlPoint(imagePoint);
+        Point edgeImagePoint = ClampImagePoint(new Point(imagePoint.X + _roiBallRadiusPixels, imagePoint.Y));
+        Point edge = ImageToControlPoint(edgeImagePoint);
+        double radius = Math.Abs(edge.X - center.X);
+        if (radius < 0.5)
+        {
+            Point fallbackImagePoint = ClampImagePoint(new Point(imagePoint.X - _roiBallRadiusPixels, imagePoint.Y));
+            Point fallback = ImageToControlPoint(fallbackImagePoint);
+            radius = Math.Abs(center.X - fallback.X);
+        }
+
+        return Math.Max(3.0, radius);
     }
 
     private void UpdatePixelLens(Point controlPoint)

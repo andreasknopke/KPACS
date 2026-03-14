@@ -26,6 +26,7 @@ public partial class StudyViewerWindow
         ConfigureIconButton(ToolboxEllipseRoiButton, CreateEllipseRoiIcon(), "Ellipse ROI.");
         ConfigureIconButton(ToolboxPolygonRoiButton, CreatePolygonRoiIcon(), "Polygon ROI.");
         ConfigureIconButton(ToolboxVolumeRoiButton, CreateVolumeRoiIcon(), "3D ROI across multiple slices.");
+        ConfigureIconButton(ToolboxBallRoiButton, CreateBallRoiIcon(), "ROI ball sculpting: drag the circular brush across polygon or 3D ROI edges to dent or bulge them. Use CTRL+wheel or [ and ] to change the radius.");
         ConfigureIconButton(ToolboxModifyButton, CreateModifyIcon(), "Modify selected measurement.");
         ConfigureIconButton(ToolboxEraseButton, CreateEraseIcon(), "Erase selected measurement.");
         ConfigureIconButton(ToolboxOverlayToggleButton, CreateOverlayIcon(), "Toggle image overlay.");
@@ -118,6 +119,12 @@ public partial class StudyViewerWindow
         LineShape(14, 6, 14, 10, 1.5),
         LineShape(17, 10, 17, 14, 1.5),
         LineShape(8, 13, 8, 17, 1.5));
+
+    private static Control CreateBallRoiIcon() => CreateIconHost(
+        OutlinePath("M7 8 L16 7 L18 12 L13 17 L7.5 15.5 Z"),
+        OutlineEllipse(9, 9, 8, 8),
+        LineShape(13, 7.5, 13, 18.5, 1.5),
+        LineShape(7.5, 13, 18.5, 13, 1.5));
 
     private static Control CreateModifyIcon() => CreateIconHost(
         OutlineRectangle(6, 6, 12, 12),

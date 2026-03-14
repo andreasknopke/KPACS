@@ -10,6 +10,7 @@ public partial class DicomViewPanel
 {
     public sealed record AutoOutlinedMeasurementInfo(Guid MeasurementId, MeasurementKind Kind, Point SeedPoint, int SensitivityLevel);
 
+    private static readonly int[] s_autoOutlineKernel = [1, 4, 6, 4, 1];
     private const int AutoOutlineMinPixels = 18;
     private const int AutoOutlineMaxPixels = 32000;
     private const int AutoOutlineMaxVoxelCount = 180000;
@@ -195,7 +196,9 @@ public partial class DicomViewPanel
 
         int localSeedX = seedX - left;
         int localSeedY = seedY - top;
-        if (!TryComputeAutoOutlineTolerance(seedX, seedY, seedValue, sensitivityLevel, out double localMean, out double tolerance))
+        double[,] homogenizedValues = BuildHomogenizedPixelWindow(left, top, width, height);
+        double homogenizedSeedValue = homogenizedValues[localSeedX, localSeedY];
+        if (!TryComputeAutoOutlineTolerance(seedX, seedY, seedValue, homogenizedSeedValue, sensitivityLevel, out double localMean, out double tolerance))
         {
             return false;
         }
@@ -212,12 +215,13 @@ public partial class DicomViewPanel
             (int x, int y) = queue.Dequeue();
             int imageX = x + left;
             int imageY = y + top;
-            if (!TryGetPixelValue(imageX, imageY, out double value))
+            double homogenizedValue = homogenizedValues[x, y];
+            if (!TryGetPixelValue(imageX, imageY, out double rawValue))
             {
-                continue;
+                rawValue = homogenizedValue;
             }
 
-            if (!IsAutoOutlinePixelAccepted(value, seedValue, localMean, tolerance))
+            if (!IsAutoOutlinePixelAccepted(homogenizedValue, rawValue, homogenizedSeedValue, seedValue, localMean, tolerance))
             {
                 continue;
             }
@@ -256,18 +260,24 @@ public partial class DicomViewPanel
             return false;
         }
 
-        mask = new AutoOutlineMask(left, top, included, count);
+        bool[,] cleanedMask = SmoothAutoOutlineMask(included, localSeedX, localSeedY, out count);
+        if (count < AutoOutlineMinPixels)
+        {
+            return false;
+        }
+
+        mask = new AutoOutlineMask(left, top, cleanedMask, count);
         return true;
     }
 
-    private bool TryComputeAutoOutlineTolerance(int seedX, int seedY, double seedValue, int sensitivityLevel, out double mean, out double tolerance)
+    private bool TryComputeAutoOutlineTolerance(int seedX, int seedY, double seedValue, double homogenizedSeedValue, int sensitivityLevel, out double mean, out double tolerance)
     {
         List<double> values = [];
-        for (int y = Math.Max(0, seedY - 2); y <= Math.Min(_imageHeight - 1, seedY + 2); y++)
+        for (int y = Math.Max(0, seedY - 3); y <= Math.Min(_imageHeight - 1, seedY + 3); y++)
         {
-            for (int x = Math.Max(0, seedX - 2); x <= Math.Min(_imageWidth - 1, seedX + 2); x++)
+            for (int x = Math.Max(0, seedX - 3); x <= Math.Min(_imageWidth - 1, seedX + 3); x++)
             {
-                if (TryGetPixelValue(x, y, out double value))
+                if (TryGetHomogenizedPixelValue(x, y, out double value))
                 {
                     values.Add(value);
                 }
@@ -287,19 +297,23 @@ public partial class DicomViewPanel
         double stdDev = Math.Sqrt(Math.Max(variance, 0));
         double min = values.Min();
         double max = values.Max();
+        double interQuartileRange = ComputeInterQuartileRange(values);
         string modality = (_modality ?? string.Empty).Trim().ToUpperInvariant();
         double baselineTolerance = modality == "CT"
             ? 18.0
-            : Math.Max(6.0, Math.Abs(seedValue) * 0.08);
-        tolerance = ApplyAutoOutlineSensitivity(Math.Max(baselineTolerance, Math.Max(stdDev * 2.35, (max - min) * 0.55)), sensitivityLevel);
+            : Math.Max(6.0, Math.Abs(homogenizedSeedValue != 0 ? homogenizedSeedValue : seedValue) * 0.075);
+        tolerance = ApplyAutoOutlineSensitivity(Math.Max(baselineTolerance, Math.Max(stdDev * 2.1, Math.Max((max - min) * 0.48, interQuartileRange * 1.7))), sensitivityLevel);
         return true;
     }
 
-    private static bool IsAutoOutlinePixelAccepted(double value, double seedValue, double localMean, double tolerance)
+    private static bool IsAutoOutlinePixelAccepted(double value, double rawValue, double seedValue, double rawSeedValue, double localMean, double tolerance)
     {
         double seedDelta = Math.Abs(value - seedValue);
         double meanDelta = Math.Abs(value - localMean);
-        return seedDelta <= tolerance || meanDelta <= tolerance * 0.82;
+        double rawSeedDelta = Math.Abs(rawValue - rawSeedValue);
+        return seedDelta <= tolerance ||
+            meanDelta <= tolerance * 0.72 ||
+            (seedDelta <= tolerance * 1.12 && rawSeedDelta <= tolerance * 0.55);
     }
 
     private static Point[] TraceAutoOutlineBoundary(AutoOutlineMask mask, int maxPointCount)
@@ -385,8 +399,9 @@ public partial class DicomViewPanel
         int seedY = Math.Clamp((int)Math.Round(voxelY), 0, _volume.SizeY - 1);
         int seedZ = Math.Clamp((int)Math.Round(voxelZ), 0, _volume.SizeZ - 1);
         short seedValue = _volume.GetVoxel(seedX, seedY, seedZ);
+        double homogenizedSeedValue = GetHomogenizedVoxelValue(seedX, seedY, seedZ);
 
-        if (!TryComputeVolumeTolerance(seedX, seedY, seedZ, seedValue, sensitivityLevel, out double localMean, out double tolerance))
+        if (!TryComputeVolumeTolerance(seedX, seedY, seedZ, seedValue, homogenizedSeedValue, sensitivityLevel, out double localMean, out double tolerance))
         {
             return false;
         }
@@ -404,7 +419,8 @@ public partial class DicomViewPanel
         {
             (int x, int y, int z) = queue.Dequeue();
             short value = _volume.GetVoxel(x, y, z);
-            if (!IsAutoOutlinePixelAccepted(value, seedValue, localMean, tolerance))
+            double homogenizedValue = GetHomogenizedVoxelValue(x, y, z);
+            if (!IsAutoOutlinePixelAccepted(homogenizedValue, value, homogenizedSeedValue, seedValue, localMean, tolerance))
             {
                 continue;
             }
@@ -448,7 +464,7 @@ public partial class DicomViewPanel
         return region.Count >= AutoOutlineMinPixels * 2;
     }
 
-    private bool TryComputeVolumeTolerance(int seedX, int seedY, int seedZ, short seedValue, int sensitivityLevel, out double mean, out double tolerance)
+    private bool TryComputeVolumeTolerance(int seedX, int seedY, int seedZ, short seedValue, double homogenizedSeedValue, int sensitivityLevel, out double mean, out double tolerance)
     {
         mean = 0;
         tolerance = 0;
@@ -460,11 +476,11 @@ public partial class DicomViewPanel
         List<double> values = [];
         for (int z = Math.Max(0, seedZ - 1); z <= Math.Min(_volume.SizeZ - 1, seedZ + 1); z++)
         {
-            for (int y = Math.Max(0, seedY - 1); y <= Math.Min(_volume.SizeY - 1, seedY + 1); y++)
+            for (int y = Math.Max(0, seedY - 2); y <= Math.Min(_volume.SizeY - 1, seedY + 2); y++)
             {
-                for (int x = Math.Max(0, seedX - 1); x <= Math.Min(_volume.SizeX - 1, seedX + 1); x++)
+                for (int x = Math.Max(0, seedX - 2); x <= Math.Min(_volume.SizeX - 1, seedX + 2); x++)
                 {
-                    values.Add(_volume.GetVoxel(x, y, z));
+                    values.Add(GetHomogenizedVoxelValue(x, y, z));
                 }
             }
         }
@@ -479,9 +495,10 @@ public partial class DicomViewPanel
         double variance = values.Average(value => (value - averageValue) * (value - averageValue));
         double stdDev = Math.Sqrt(Math.Max(variance, 0));
         double range = values.Max() - values.Min();
+        double interQuartileRange = ComputeInterQuartileRange(values);
         string modality = (_modality ?? string.Empty).Trim().ToUpperInvariant();
-        double baselineTolerance = modality == "CT" ? 22.0 : Math.Max(8.0, Math.Abs(seedValue) * 0.08);
-        tolerance = ApplyAutoOutlineSensitivity(Math.Max(baselineTolerance, Math.Max(stdDev * 2.6, range * 0.65)), sensitivityLevel);
+        double baselineTolerance = modality == "CT" ? 22.0 : Math.Max(8.0, Math.Abs(homogenizedSeedValue != 0 ? homogenizedSeedValue : seedValue) * 0.075);
+        tolerance = ApplyAutoOutlineSensitivity(Math.Max(baselineTolerance, Math.Max(stdDev * 2.2, Math.Max(range * 0.54, interQuartileRange * 1.85))), sensitivityLevel);
         return true;
     }
 
@@ -489,6 +506,220 @@ public partial class DicomViewPanel
     {
         double scaled = tolerance * Math.Pow(1.14, sensitivityLevel);
         return Math.Max(1.0, scaled);
+    }
+
+    private bool TryGetHomogenizedPixelValue(int x, int y, out double value)
+    {
+        value = 0;
+        if (_imageWidth <= 0 || _imageHeight <= 0 || (uint)x >= (uint)_imageWidth || (uint)y >= (uint)_imageHeight)
+        {
+            return false;
+        }
+
+        int radius = s_autoOutlineKernel.Length / 2;
+        double weightedSum = 0;
+        double weightTotal = 0;
+        for (int offsetY = -radius; offsetY <= radius; offsetY++)
+        {
+            int sampleY = Math.Clamp(y + offsetY, 0, _imageHeight - 1);
+            int weightY = s_autoOutlineKernel[offsetY + radius];
+            for (int offsetX = -radius; offsetX <= radius; offsetX++)
+            {
+                int sampleX = Math.Clamp(x + offsetX, 0, _imageWidth - 1);
+                if (!TryGetPixelValue(sampleX, sampleY, out double sample))
+                {
+                    continue;
+                }
+
+                int weight = weightY * s_autoOutlineKernel[offsetX + radius];
+                weightedSum += sample * weight;
+                weightTotal += weight;
+            }
+        }
+
+        if (weightTotal <= 0)
+        {
+            return TryGetPixelValue(x, y, out value);
+        }
+
+        value = weightedSum / weightTotal;
+        return true;
+    }
+
+    private double[,] BuildHomogenizedPixelWindow(int left, int top, int width, int height)
+    {
+        double[,] values = new double[width, height];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                TryGetHomogenizedPixelValue(left + x, top + y, out values[x, y]);
+            }
+        }
+
+        return values;
+    }
+
+    private bool[,] SmoothAutoOutlineMask(bool[,] included, int seedX, int seedY, out int pixelCount)
+    {
+        int width = included.GetLength(0);
+        int height = included.GetLength(1);
+        bool[,] smoothed = new bool[width, height];
+        pixelCount = 0;
+
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int neighbors = 0;
+                int active = 0;
+                for (int offsetY = -1; offsetY <= 1; offsetY++)
+                {
+                    for (int offsetX = -1; offsetX <= 1; offsetX++)
+                    {
+                        int nextX = x + offsetX;
+                        int nextY = y + offsetY;
+                        if ((uint)nextX >= (uint)width || (uint)nextY >= (uint)height)
+                        {
+                            continue;
+                        }
+
+                        neighbors++;
+                        if (included[nextX, nextY])
+                        {
+                            active++;
+                        }
+                    }
+                }
+
+                smoothed[x, y] = included[x, y]
+                    ? active >= Math.Min(4, neighbors)
+                    : active >= Math.Min(6, neighbors);
+            }
+        }
+
+        if ((uint)seedX < (uint)width && (uint)seedY < (uint)height)
+        {
+            smoothed[seedX, seedY] = true;
+        }
+
+        bool[,] connected = RetainSeedConnectedMask(smoothed, seedX, seedY, out pixelCount);
+        return connected;
+    }
+
+    private static bool[,] RetainSeedConnectedMask(bool[,] mask, int seedX, int seedY, out int pixelCount)
+    {
+        int width = mask.GetLength(0);
+        int height = mask.GetLength(1);
+        bool[,] connected = new bool[width, height];
+        pixelCount = 0;
+        if ((uint)seedX >= (uint)width || (uint)seedY >= (uint)height || !mask[seedX, seedY])
+        {
+            return connected;
+        }
+
+        bool[,] visited = new bool[width, height];
+        Queue<(int X, int Y)> queue = new();
+        queue.Enqueue((seedX, seedY));
+        visited[seedX, seedY] = true;
+
+        while (queue.Count > 0)
+        {
+            (int x, int y) = queue.Dequeue();
+            if (!mask[x, y])
+            {
+                continue;
+            }
+
+            connected[x, y] = true;
+            pixelCount++;
+            for (int offsetY = -1; offsetY <= 1; offsetY++)
+            {
+                for (int offsetX = -1; offsetX <= 1; offsetX++)
+                {
+                    if (offsetX == 0 && offsetY == 0)
+                    {
+                        continue;
+                    }
+
+                    int nextX = x + offsetX;
+                    int nextY = y + offsetY;
+                    if ((uint)nextX >= (uint)width || (uint)nextY >= (uint)height || visited[nextX, nextY])
+                    {
+                        continue;
+                    }
+
+                    visited[nextX, nextY] = true;
+                    queue.Enqueue((nextX, nextY));
+                }
+            }
+        }
+
+        return connected;
+    }
+
+    private double GetHomogenizedVoxelValue(int x, int y, int z)
+    {
+        if (_volume is null)
+        {
+            return 0;
+        }
+
+        double weightedSum = 0;
+        double weightTotal = 0;
+        for (int offsetZ = -1; offsetZ <= 1; offsetZ++)
+        {
+            int sampleZ = Math.Clamp(z + offsetZ, 0, _volume.SizeZ - 1);
+            int weightZ = offsetZ == 0 ? 2 : 1;
+            for (int offsetY = -1; offsetY <= 1; offsetY++)
+            {
+                int sampleY = Math.Clamp(y + offsetY, 0, _volume.SizeY - 1);
+                int weightY = offsetY == 0 ? 2 : 1;
+                for (int offsetX = -1; offsetX <= 1; offsetX++)
+                {
+                    int sampleX = Math.Clamp(x + offsetX, 0, _volume.SizeX - 1);
+                    int weightX = offsetX == 0 ? 2 : 1;
+                    int weight = weightX * weightY * weightZ;
+                    weightedSum += _volume.GetVoxel(sampleX, sampleY, sampleZ) * weight;
+                    weightTotal += weight;
+                }
+            }
+        }
+
+        return weightTotal <= 0 ? 0 : weightedSum / weightTotal;
+    }
+
+    private static double ComputeInterQuartileRange(List<double> values)
+    {
+        if (values.Count == 0)
+        {
+            return 0;
+        }
+
+        double[] ordered = [.. values.OrderBy(value => value)];
+        double q1 = InterpolatePercentile(ordered, 0.25);
+        double q3 = InterpolatePercentile(ordered, 0.75);
+        return Math.Max(0, q3 - q1);
+    }
+
+    private static double InterpolatePercentile(IReadOnlyList<double> orderedValues, double percentile)
+    {
+        if (orderedValues.Count == 0)
+        {
+            return 0;
+        }
+
+        double clamped = Math.Clamp(percentile, 0, 1);
+        double position = clamped * (orderedValues.Count - 1);
+        int lower = (int)Math.Floor(position);
+        int upper = (int)Math.Ceiling(position);
+        if (lower == upper)
+        {
+            return orderedValues[lower];
+        }
+
+        double t = position - lower;
+        return orderedValues[lower] + ((orderedValues[upper] - orderedValues[lower]) * t);
     }
 
     private VolumeRoiContour[] BuildAutoOutlinedVolumeContours(HashSet<int> region)

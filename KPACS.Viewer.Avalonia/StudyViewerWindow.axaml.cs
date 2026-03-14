@@ -14,6 +14,7 @@ using KPACS.Viewer.Controls;
 using KPACS.Viewer.Models;
 using KPACS.Viewer.Rendering;
 using KPACS.Viewer.Services;
+using KPACS.Viewer.Windows;
 using SpatialVector3D = KPACS.Viewer.Models.Vector3D;
 
 namespace KPACS.Viewer;
@@ -42,7 +43,7 @@ public partial class StudyViewerWindow : Window
     private StudyDetails? _thumbnailStripStudy;
     private CancellationTokenSource? _priorPreviewCancellation;
     private ViewportSlot? _activeSlot;
-    private Border? _dragGhost;
+    private SeriesDragGhostWindow? _dragGhostWindow;
     private ActionToolbarMode _actionToolbarMode = ActionToolbarMode.ScrollStack;
     private int _selectedColorScheme = (int)ColorScheme.Grayscale;
     private bool _overlayEnabled = true;
@@ -1542,12 +1543,13 @@ public partial class StudyViewerWindow : Window
             return;
         }
 
-        Point overlayPoint = e.GetPosition(DragGhostOverlay);
-        ViewportSlot? slot = FindSlotAtOverlayPoint(overlayPoint);
-        if (slot is not null)
+        Point screenPoint = GetPointerScreenPoint(e);
+        ViewportDropTarget? dropTarget = FindDropTargetAtScreenPoint(screenPoint);
+        if (dropTarget is not null)
         {
-            AssignSeriesToSlot(slot, series);
-            SetActiveSlot(slot);
+            dropTarget.Window.AssignSeriesToSlot(dropTarget.Slot, series);
+            dropTarget.Window.SetActiveSlot(dropTarget.Slot);
+            dropTarget.Window.Activate();
         }
 
         CancelThumbnailDrag(border);
@@ -1578,12 +1580,12 @@ public partial class StudyViewerWindow : Window
         {
             pending.IsStarted = true;
             e.Pointer.Capture(border);
-            ShowDragGhost(series, pending.ThumbnailPath, e.GetPosition(DragGhostOverlay));
+            ShowDragGhost(series, pending.ThumbnailPath, GetPointerScreenPoint(e));
         }
 
-        Point overlayPosition = e.GetPosition(DragGhostOverlay);
-        UpdateDragGhostPosition(overlayPosition);
-        SetDropTargetAtPoint(overlayPosition);
+        Point screenPoint = GetPointerScreenPoint(e);
+        UpdateDragGhostPosition(screenPoint);
+        SetDropTargetAtScreenPoint(screenPoint);
         return Task.CompletedTask;
     }
 
@@ -1596,7 +1598,7 @@ public partial class StudyViewerWindow : Window
     {
         ClearPendingThumbnailDrag(border);
         HideDragGhost();
-        ClearDropTargets();
+        ClearDropTargetsAcrossViewers();
     }
 
     private void AssignSeriesToSlot(ViewportSlot slot, SeriesRecord series)
@@ -1935,77 +1937,50 @@ public partial class StudyViewerWindow : Window
         }
     }
 
-    private void ShowDragGhost(SeriesRecord series, string thumbnailPath, Point overlayPosition)
+    private void ShowDragGhost(SeriesRecord series, string thumbnailPath, Point screenPoint)
     {
         HideDragGhost();
 
-        var ghostBorder = new Border
+        _dragGhostWindow = new SeriesDragGhostWindow(series, thumbnailPath)
         {
-            Width = 108,
-            Height = 86,
-            Padding = new Thickness(4),
-            Background = new SolidColorBrush(Color.Parse("#D0000000")),
-            BorderBrush = new SolidColorBrush(Color.Parse("#FFF1E000")),
-            BorderThickness = new Thickness(1),
-            Opacity = 0.9,
-            IsHitTestVisible = false,
+            ShowActivated = false,
         };
-
-        var grid = new Grid
-        {
-            RowDefinitions = new RowDefinitions("*,Auto"),
-            IsHitTestVisible = false,
-        };
-
-        var thumbPanel = new DicomViewPanel
-        {
-            Width = 98,
-            Height = 58,
-            ShowOverlay = false,
-            ShowToolboxButton = false,
-            IsHitTestVisible = false,
-        };
-        if (!string.IsNullOrWhiteSpace(thumbnailPath) && File.Exists(thumbnailPath))
-        {
-            thumbPanel.LoadFile(thumbnailPath);
-        }
-
-        var label = new TextBlock
-        {
-            Text = $"S{Math.Max(series.SeriesNumber, 1)}",
-            Foreground = Brushes.White,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 4, 0, 0),
-            IsHitTestVisible = false,
-        };
-
-        grid.Children.Add(thumbPanel);
-        Grid.SetRow(label, 1);
-        grid.Children.Add(label);
-        ghostBorder.Child = grid;
-
-        _dragGhost = ghostBorder;
-        DragGhostOverlay.Children.Add(ghostBorder);
-        UpdateDragGhostPosition(overlayPosition);
+        _dragGhostWindow.Show();
+        UpdateDragGhostPosition(screenPoint);
     }
 
-    private void UpdateDragGhostPosition(Point overlayPosition)
+    private void UpdateDragGhostPosition(Point screenPoint)
     {
-        if (_dragGhost is null)
+        if (_dragGhostWindow is null)
         {
             return;
         }
 
-        Canvas.SetLeft(_dragGhost, overlayPosition.X + 14);
-        Canvas.SetTop(_dragGhost, overlayPosition.Y + 14);
+        _dragGhostWindow.MoveTo(screenPoint, 14, 14);
     }
 
     private void HideDragGhost()
     {
-        if (_dragGhost is not null)
+        if (_dragGhostWindow is not null)
         {
-            DragGhostOverlay.Children.Remove(_dragGhost);
-            _dragGhost = null;
+            _dragGhostWindow.Close();
+            _dragGhostWindow = null;
+        }
+    }
+
+    private void SetDropTargetAtScreenPoint(Point screenPoint)
+    {
+        ViewportDropTarget? dropTarget = FindDropTargetAtScreenPoint(screenPoint);
+        foreach (StudyViewerWindow window in GetOpenViewerWindowsSnapshot())
+        {
+            if (dropTarget is not null && ReferenceEquals(window, dropTarget.Window))
+            {
+                window.SetDropTarget(dropTarget.Slot);
+            }
+            else
+            {
+                window.ClearDropTargets();
+            }
         }
     }
 
@@ -2039,6 +2014,63 @@ public partial class StudyViewerWindow : Window
         }
 
         return null;
+    }
+
+    private ViewportDropTarget? FindDropTargetAtScreenPoint(Point screenPoint)
+    {
+        foreach (StudyViewerWindow window in GetOpenViewerWindowsSnapshot())
+        {
+            ViewportSlot? slot = window.FindSlotAtScreenPoint(screenPoint);
+            if (slot is not null)
+            {
+                return new ViewportDropTarget(window, slot);
+            }
+        }
+
+        return null;
+    }
+
+    private ViewportSlot? FindSlotAtScreenPoint(Point screenPoint)
+    {
+        foreach (ViewportSlot slot in _slots)
+        {
+            Point? topLeft = slot.Border.TranslatePoint(new Point(0, 0), this);
+            if (topLeft is null)
+            {
+                continue;
+            }
+
+            Point windowOrigin = new(Position.X, Position.Y);
+            Rect rect = new(windowOrigin + topLeft.Value, slot.Border.Bounds.Size);
+            if (rect.Contains(screenPoint))
+            {
+                return slot;
+            }
+        }
+
+        return null;
+    }
+
+    private Point GetPointerScreenPoint(PointerEventArgs e)
+    {
+        Point localPoint = e.GetPosition(this);
+        return new Point(Position.X + localPoint.X, Position.Y + localPoint.Y);
+    }
+
+    private void ClearDropTargetsAcrossViewers()
+    {
+        foreach (StudyViewerWindow window in GetOpenViewerWindowsSnapshot())
+        {
+            window.ClearDropTargets();
+        }
+    }
+
+    private static List<StudyViewerWindow> GetOpenViewerWindowsSnapshot()
+    {
+        lock (s_openViewerSyncLock)
+        {
+            return [.. s_openViewerWindows];
+        }
     }
 
     private void OnPanelImagePointPressed(ViewportSlot sourceSlot, DicomImagePointerInfo info)
@@ -2548,6 +2580,36 @@ public partial class StudyViewerWindow : Window
             }
         }
 
+        if (_measurementTool == MeasurementTool.BallRoiCorrection)
+        {
+            if (TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is not TextBox &&
+                _activeSlot?.Panel is { } brushPanel)
+            {
+                int brushDelta = e.Key switch
+                {
+                    Key.OemOpenBrackets => -1,
+                    Key.OemCloseBrackets => 1,
+                    Key.OemMinus => -1,
+                    Key.OemPlus => 1,
+                    Key.Subtract => -1,
+                    Key.Add => 1,
+                    _ => 0,
+                };
+
+                if (brushDelta != 0)
+                {
+                    int brushStep = e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? 3 : 1;
+                    if (brushPanel.TryAdjustBallRoiRadius(brushDelta * brushStep, out _))
+                    {
+                        UpdateStatus();
+                    }
+
+                    e.Handled = true;
+                    return;
+                }
+            }
+        }
+
         if (_measurementTool != MeasurementTool.Modify)
         {
             return;
@@ -2603,6 +2665,9 @@ public partial class StudyViewerWindow : Window
         string nudgeText = _measurementTool == MeasurementTool.Modify
             ? "   Nudge: arrows move selected measurement (SHIFT = 5 px)"
             : string.Empty;
+        string ballCorrectionText = _measurementTool == MeasurementTool.BallRoiCorrection
+            ? $"   ROI ball: drag the circle across ROI edges to dent or bulge; CTRL+wheel or [ ] changes radius ({(_activeSlot?.Panel?.BallRoiRadiusPixels ?? 0)} px, SHIFT = faster)"
+            : string.Empty;
         string volumeRoiText = _measurementTool == MeasurementTool.VolumeRoi || _activeSlot?.Panel is { HasVolumeRoiDraft: true }
             ? "   3D ROI: double-click without a line auto-outlines a 3D lesion, double-click with a line closes contour, use Add to merge another region, preview buttons grow/shrink, arrows rotate mesh (SHIFT = faster), scroll slices, Enter finishes, Esc cancels"
             : string.Empty;
@@ -2615,7 +2680,7 @@ public partial class StudyViewerWindow : Window
 
         if (slot?.Series is null)
         {
-            return $"{toolText}   {measurementText}{nudgeText}{polygonAutoOutlineText}{volumeRoiText}   {linkedText}   {cursorText}";
+            return $"{toolText}   {measurementText}{nudgeText}{ballCorrectionText}{polygonAutoOutlineText}{volumeRoiText}   {linkedText}   {cursorText}";
         }
 
         int total = GetSeriesTotalCount(slot.Series);
@@ -2634,7 +2699,7 @@ public partial class StudyViewerWindow : Window
             ? $"   {slot.Panel.OrientationLabel}   {slot.Panel.ProjectionModeLabel} {slot.Panel.ProjectionThicknessMm:F1} mm"
             : string.Empty;
 
-        return $"{slot.Series.Modality}   Series {slot.Series.SeriesNumber}   Image {slot.InstanceIndex + 1}/{total}{projectionText}   {toolText}   {measurementText}{nudgeText}{polygonAutoOutlineText}{volumeRoiText}{retrievalText}   {linkedText}   {cursorText}";
+        return $"{slot.Series.Modality}   Series {slot.Series.SeriesNumber}   Image {slot.InstanceIndex + 1}/{total}{projectionText}   {toolText}   {measurementText}{nudgeText}{ballCorrectionText}{polygonAutoOutlineText}{volumeRoiText}{retrievalText}   {linkedText}   {cursorText}";
     }
 
     private int GetLinkedViewCount(ViewportSlot sourceSlot)
@@ -3579,6 +3644,8 @@ public partial class StudyViewerWindow : Window
         DicomSpatialMetadata SourceMetadata,
         SpatialVector3D PatientPoint,
         DicomViewPanel.NavigationState NavigationState);
+
+    private sealed record ViewportDropTarget(StudyViewerWindow Window, ViewportSlot Slot);
 
     private sealed class PendingThumbnailDrag(SeriesRecord series, Point startPoint, string thumbnailPath)
     {

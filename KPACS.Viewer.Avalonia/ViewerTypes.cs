@@ -54,6 +54,7 @@ public enum MeasurementTool
     EllipseRoi,
     PolygonRoi,
     VolumeRoi,
+    BallRoiCorrection,
     Modify,
     Erase,
 }
